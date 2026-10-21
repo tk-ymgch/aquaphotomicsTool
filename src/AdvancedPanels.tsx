@@ -143,6 +143,8 @@ export function ComparisonPanel({ runs, onRemove, onClear, onRestore, disabled }
   const plsRuns = displayed.filter(run => run.result.pls), keys = plsRuns.map(comparisonKey);
   const compatible = plsRuns.length > 1 && keys.every(key => key === keys[0]);
   const rows: { name: string; value: (run: ComparisonRun) => string }[] = [
+    { name: 'PCA・Aquagramの計算元', value: run => run.result.metadata.execution?.engine === 'aquap2' ? `aquap2 ${run.result.metadata.execution.aquap2Version} / ${run.result.metadata.execution.rVersion}` : 'Python · ブラウザー内' },
+    { name: 'AquagramのSD', value: run => run.result.metadata.settings.aquagramReference === 'none' ? '標準化なし' : run.result.metadata.execution?.engine === 'aquap2' ? '標本SD（n−1）' : '母SD（n）' },
     { name: '前処理方式', value: run => run.result.metadata.settings.pipelineMode === 'legacy-python' ? '旧Python互換' : '標準方式' },
     { name: '前処理', value: run => preprocessing(run.result) },
     { name: '波長範囲', value: run => `${run.result.metadata.range[0]}–${run.result.metadata.range[1]} nm` },

@@ -3,7 +3,7 @@ import type { AnalysisConfig, DatasetSummary, PLSConfig } from './types';
 export interface SettingsDocument {
   format: 'aquaphotomics-workbench-settings';
   schemaVersion: 1;
-  appVersion: '1.3';
+  appVersion: '1.4';
   createdAt: string;
   source: { name: string; sheet: string | null } | null;
   config: AnalysisConfig;
@@ -85,6 +85,7 @@ function sourceMetadata(value: unknown): SettingsDocument['source'] {
 function validateConfig(value: unknown, summary: DatasetSummary | null): AnalysisConfig {
   const input = record(value, '解析設定');
   const pipelineMode = input.pipelineMode === undefined ? undefined : choice(input.pipelineMode, ['modern', 'legacy-python'], '前処理方式');
+  const analysisEngine = input.analysisEngine === undefined ? undefined : choice(input.analysisEngine, ['python', 'aquap2'], '解析エンジン');
   const columns = summary ? new Set(summary.columns) : null;
   const idColumn = column(input.idColumn, '試料ID列', columns);
   const groupColumn = column(input.groupColumn, 'グループ列', columns);
@@ -157,6 +158,7 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
     aquagramWavelengths: targets, aquagramReference: reference, aquagramTolerance: tolerance,
   };
   if (pipelineMode !== undefined) config.pipelineMode = pipelineMode;
+  if (analysisEngine !== undefined) config.analysisEngine = analysisEngine;
   if (input.pls !== undefined) {
     const pls = record(input.pls, 'PLS設定');
     const enabled = boolean(pls.enabled, 'PLSの有効設定');
@@ -181,7 +183,7 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
 export function createSettingsDocument(config: AnalysisConfig, source: { name: string; sheet?: string | null } | null): SettingsDocument {
   safeTree(config); safeTree(source);
   return {
-    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.3',
+    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.4',
     createdAt: new Date().toISOString(), source: sourceMetadata(source), config: validateConfig(config, null),
   };
 }
@@ -195,7 +197,7 @@ export function parseSettingsDocument(textInput: string, summary: DatasetSummary
   let config: unknown = document;
   if (own(document, 'format')) {
     if (document.format !== 'aquaphotomics-workbench-settings') fail('この設定ファイルのformatには対応していません。');
-    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
+    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
     if (typeof document.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(document.createdAt) || !Number.isFinite(Date.parse(document.createdAt))) fail('設定の作成日時が不正です。');
     sourceMetadata(document.source);
     config = document.config;

@@ -1,5 +1,15 @@
 # 実装契約
 
+## v1.4の実aquap2実行経路
+
+- `analysisEngine?: 'python' | 'aquap2'`。省略はPython。`pipelineMode`は独立で両エンジン共通のPython前処理を選び、エンジン切替で設定を変更しない。
+- `Aquap2Client.connect()`はloopbackサービスのhealthと短期sessionを確認。トークン・接続先はAppのstate/refのみで、設定・ZIPに含めない。未接続は実行不可。
+- WorkerのPython解析完了後、前処理済み行列・実波長・ID・群とPCA/AQ条件だけを送信。固定aquap2本体の公開`gdmm`出力でPCA/AQを置換する。失敗時にPython結果をaquap2結果として採用しない。
+- 対応は平均中心化/scale=falseのPCA、AQ classic/global・classic-diff/groupのみ。PCA標準化・AQ none・PLS有効は明示ブロック。旧R互換、温度校正、AUC/sfc、任意Rコード実行は含めない。
+- `metadata.execution`に実エンジン・前処理エンジン・aquap2/R版・APIを記録。AQのPython ddof0とaquap2 ddof1、および必須恒等SG3/p2/m0の丸め効果を実行provenanceへ残す。
+- サービスは127.0.0.1:8787だけにbindし、Origin/Host・短期Bearer・入力上限を検証する。元ファイル・目的変数を送らない。起動は利用者の前景ターミナルで行い自動起動しない。
+- v1.3の限定source harnessと、インストール済み本体APIの比較は別証跡として保持する。
+
 ## v1.2の追加
 
 - AnalysisConfig.plsは任意。単一数値目的変数、最大成分1〜10、outer folds2〜10、seed0〜2147483647。無効時は従来PCA/Aquagram解析を維持。
@@ -8,7 +18,7 @@
 - PLSResult、PLSConfig、ComparisonRunの正式型はsrc/types.ts。src/AdvancedPanels.tsxのplsFiguresとcomparisonFiguresを画面・PNG保存で共有する。
 - src/settings.tsは版付き設定JSONと旧settings.jsonのrequestedConfigを検証して再読込する。外部JSONは1 MiB上限。結果内の大きなprovenanceは内部で要求設定だけ抽出して現行JSONへ再包装する。
 - 条件比較は同一データの最大4件/推定96 MiBのメモリー内スナップショット。新データ/シートの読込成功時に消去する。比較ZIPには各条件の結果・設定・同じ表示図を保存する。
-- R交換は結果ZIPのr/にbase R scriptと手順を同梱する。ブラウザーからRscriptを呼んだり外部へデータ送信したりしない。aquap2実行基盤は別工程。
+- v1.2時点のR交換は結果ZIPのr/にbase R scriptと手順を同梱するオフライン方式。v1.4のローカルaquap2実行経路とは別。
 
 ## 基本構成
 

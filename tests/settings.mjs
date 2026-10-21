@@ -26,7 +26,7 @@ function check(name, test) { try { test(); passed++; } catch (error) { console.e
 check('new document roundtrip and detached snapshots', () => {
   const input = structuredClone(config), doc = createSettingsDocument(input, { name: summary.name });
   assert.equal(doc.format, 'aquaphotomics-workbench-settings');
-  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.3');
+  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.4');
   assert.equal(doc.source.sheet, null); assert.ok(Number.isFinite(Date.parse(doc.createdAt)));
   input.range[0] = 999; input.wavelengthColumns.length = 0;
   assert.deepEqual(decode(doc), config);
@@ -118,5 +118,12 @@ check('legacy SG validates Aquagram against the original uneven grid', () => {
   assert.deepEqual(decode(legacy, dataset), legacy);
   assert.throws(() => decode({ ...legacy, pipelineMode: 'modern' }, dataset), /許容誤差/);
 });
+check('v1.4 preserves only the engine choice and never a local connection credential', () => {
+  const document = createSettingsDocument({ ...config, analysisEngine: 'aquap2', endpoint: 'http://127.0.0.1:8787', token: 'secret-session-token' }, null);
+  assert.deepEqual(decode(document), { ...config, analysisEngine: 'aquap2' });
+  assert.equal(JSON.stringify(document).includes('secret-session-token'), false);
+  assert.equal(JSON.stringify(document).includes('8787'), false);
+  assert.deepEqual(decode({ ...createSettingsDocument(config, null), appVersion: '1.3' }), config);
+  assert.throws(() => decode({ ...config, analysisEngine: 'source-harness' }), /解析エンジン/);
+});
 console.log(`PASS: ${passed} settings checks (roundtrip, legacy provenance, strict validation, columns, SG grid, PLS, safety)`);
-

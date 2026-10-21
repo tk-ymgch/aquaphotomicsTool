@@ -1,6 +1,18 @@
 # 検証記録
 
-## v1.3：旧Python互換・方式説明・数値表
+## v1.4：インストール済みaquap2本体の統合
+
+共通のPython前処理済み行列を隔離R環境へ送り、インストール済みaquap2 0.4.5の公開`gdmm`で平均中心化・標準化なしのPCAとclassic/classic-diffを実行する経路を追加しました。比較計画は、同一行列・試料順・実波長でPCA成分の符号を整列し、Aquagramはddof0→ddof1の換算を明示して照合するものです。必須の恒等SG3/p2/m0とその丸め差も各実行に記録します。
+
+`qa/v1.4-aquap2-verification.json`（標準方式）と `qa/v1.4-aquap2-legacy-verification.json`（旧Python互換）は、通常Python対本体APIの条件限定比較です。人工36×61、群サイズ9/12/15、12実波長で、散乱補正なし・SNV＋SG・MSC＋SG × 全体基準・指定対照群の各6条件/24数値チェック、合計12条件/48チェックが成功しました。PCAの符号整列後最大絶対差は標準4.36e-15・旧互換3.98e-15、AQのSD換算後は標準1.21e-13・旧互換1.51e-13です。換算前の参考最大差は両方式0.02230、恒等SGの最大丸め効果は6.66e-16でした。絶対許容1e-7・相対許容1e-6で判定し、sourceHarnessUsed=false、installedPackage=true、packageApiExecuted=trueを記録しています。
+
+通常Pythonの全回帰は145 passed / 1 skippedでした。Nodeの全テスト、型検査、本番ビルドも成功しています。ローカルブラウザーでは人工45×61のaquap2実行とZIP保存後の再計算を確認し、`qa/v1.4-browser-export-verification.json` が成功しました。保存出力の前処理最大差2.00e-15、PCAスコア4.62e-15・負荷量3.97e-14・寄与率4.44e-16、AQのSD換算後8.06e-14で、本体実行provenanceと6図PNGも確認しています。PCA標準化・Aquagram基準なし・PLSの非対応条件がUIで実行を止めること、両エンジンの結果を保持した比較ZIPの保存も確認しました。これらはローカルブラウザーの確認であり、公開サイトと利用者端末のR接続の確認とは区別します。
+
+v1.3の限定source harnessの数値を本体/APIの検証値へ流用しません。起動スクリプトはPowerShell構文・ヘルプと、既存隔離環境での `-CheckOnly`（aquap2 0.4.5/R 4.6.1）を確認しました。Windowsの継承POSIX localeは子プロセス起動時だけ解除し、終了時に呼出元環境を戻します。この起動スクリプト確認ではパッケージの再導入やサービスの常駐起動は行っていません。R 4.6.1を含むruntime ZIPの別復元先での実行確認は現在作業中で、完了とは扱っていません。
+
+実行範囲・再現方法は[AQUAP2_COMPARISON.md](AQUAP2_COMPARISON.md)、[R環境](AQUAP2_RUNTIME.md)を参照してください。実測データ、温度校正/AUC/sfc、旧R互換、PLSのR実行は今回の対象外です。上記の条件限定比較から、両エンジンの任意の前処理・データでの一般的な互換性は主張しません。
+
+## v1.3の履歴：旧Python互換・方式説明・数値表
 
 通常Pythonで既存68件と新規63件、計131テストが成功しました。旧Streamlitの関数をASTから独立に読み出し、人工データの54条件（等間隔/不等間隔、SG微分0/1/2次、散乱補正なし/SNV/MSC、Aquagram none/global/control）を比較しました。前処理の最大絶対差3.67e-14、PCA符号整列後スコア2.77e-14、Aquagram4.00e-14でした。平均値補完、標準方式の既定維持、PLS各学習区画内の平均補完・SG後MSC参照も検証しています。確認範囲と除外は `qa/v1.3-legacy-verification.json` に記録しています。
 
