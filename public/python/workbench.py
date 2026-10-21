@@ -16,12 +16,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.2.0"
 MAX_MATRIX_ELEMENTS = 2_000_000
 MAX_VARIABLES = 10_000
 VARIABLE_LIMIT_MESSAGE = "解析する波長数は1万列までです。波長列の選択または波長範囲を減らしてください。"
 ARTIFICIAL = "人工データ（実測値ではありません）"
 GLOBAL_REFERENCE = "global"
+MAX_PLS_ELEMENTS = 100_000
+MAX_PLS_WORK = 250_000_000
 AQUAGRAM_DEFINITION = (
     "前処理後の指定波長における（群平均 − 基準平均）÷ 全試料の標準偏差（ddof=0）。"
     "基準は全体平均または選択した対照群平均です。標準偏差が0の波長の値は0とします。"
@@ -205,6 +207,10 @@ def demo_dataset() -> tuple[pd.DataFrame, dict]:
             signal += rng.normal(0, 0.002, len(wavelengths)) + rng.normal(0, 0.003)
             row = {"sample_id": f"DEMO-{group_index * 15 + sample_index + 1:03d}",
                    "group": f"人工群 {chr(65 + group_index)}", "data_origin": ARTIFICIAL}
+            # A dimensionless artificial continuous response for PLS practice.
+            # Derive it without consuming RNG values so existing spectra remain
+            # byte-for-byte reproducible with the first release's generator.
+            row["synthetic_target"] = float(100 * (signal[30] - signal[14]) + 0.3 * np.sin(sample_index))
             row.update({f"wl_{wl:g}": float(value) for wl, value in zip(wavelengths, signal)})
             records.append(row)
     df = pd.DataFrame(records)
@@ -274,6 +280,338 @@ def _csv(df: pd.DataFrame) -> str:
     return df.to_csv(index=False, lineterminator="\n")
 
 
+def _pls_numeric(values: np.ndarray, label: str) -> None:
+    absolute = np.abs(values[np.isfinite(values)])
+    if absolute.size and (np.any(absolute > 1e100) or np.any((absolute > 0) & (absolute < 1e-100))):
+        raise ValueError(f"{label}の数値範囲が極端でPLSを安定に計算できません。単位を換算して再実行してください。")
+
+
+def _pls_check_shape(samples: int, variables: int) -> None:
+    if samples > 500 or variables > 2000 or samples * variables > MAX_PLS_ELEMENTS:
+        raise ValueError("二重CVのPLSは500試料・2000波長・10万要素までです。試料数または波長数を減らしてください。")
+
+
+def _pls_preprocess_fit(x: np.ndarray, wavelengths: np.ndarray, settings: dict, label: str) -> tuple[np.ndarray, dict]:
+    """Learn only from this training partition; never inspect validation rows."""
+    finite = np.isfinite(x)
+    if not finite.all() and settings["missing"] == "error":
+        raise ValueError(f"{label}: PLS入力に欠損・非数値があります。")
+    medians = []
+    for j in range(x.shape[1]):
+        if not finite[:, j].any():
+            raise ValueError(f"{label}: 学習区画の波長 {wavelengths[j]:g} nm が全欠損のため中央値を推定できません。")
+        medians.append(float(np.median(x[finite[:, j], j])))
+    filled = np.where(finite, x, np.array(medians)[None, :])
+    reference = filled.mean(axis=0).tolist() if settings["scatter"] == "msc" else None
+    output_wavelengths = wavelengths.copy()
+    if (settings["smooth"] or settings["derivative"] > 0) and not np.allclose(
+        np.diff(wavelengths), np.diff(wavelengths)[0], rtol=1e-6, atol=1e-9
+    ):
+        output_wavelengths = np.linspace(wavelengths[0], wavelengths[-1], len(wavelengths))
+    state = {
+        "missing": settings["missing"], "medians": medians, "scatter": settings["scatter"],
+        "mscReference": reference, "originalWavelengths": wavelengths.tolist(),
+        "wavelengths": output_wavelengths.tolist(), "smooth": settings["smooth"],
+        "window": settings["window"], "polyorder": settings["polyorder"],
+        "derivative": settings["derivative"], "sgMode": "interp", "snvDdof": 0,
+    }
+    return _pls_preprocess_apply(x, state, label), state
+
+
+def _pls_preprocess_apply(x: np.ndarray, state: dict, label: str) -> np.ndarray:
+    from scipy.signal import savgol_filter
+
+    out = np.where(np.isfinite(x), x, np.array(state["medians"])[None, :])
+    if state["scatter"] == "msc":
+        reference = np.array(state["mscReference"])
+        centered = reference - reference.mean()
+        denominator = float(centered @ centered)
+        if denominator <= 0 or not np.isfinite(denominator):
+            raise ValueError(f"{label}: 学習平均スペクトルが一定値のためMSCを計算できません。")
+        means = out.mean(axis=1)
+        slopes = (out - means[:, None]) @ centered / denominator
+        if np.any(~np.isfinite(slopes)) or np.any(np.abs(slopes) < 1e-12):
+            raise ValueError(f"{label}: MSCの傾きが0に近い試料があります。散乱補正を変更してください。")
+        out = (out - (means - slopes * reference.mean())[:, None]) / slopes[:, None]
+    elif state["scatter"] == "snv":
+        out = _scatter_correct(out, "snv")
+    original = np.array(state["originalWavelengths"])
+    grid = np.array(state["wavelengths"])
+    if not np.array_equal(original, grid):
+        out = np.array([np.interp(grid, original, row) for row in out])
+    if state["smooth"] or state["derivative"] > 0:
+        out = savgol_filter(out, state["window"], state["polyorder"], deriv=state["derivative"],
+                            delta=float(grid[1] - grid[0]), axis=1, mode=state["sgMode"])
+    if not np.isfinite(out).all():
+        raise ValueError(f"{label}: PLS前処理で有限でない値が生じました。単位や前処理を確認してください。")
+    _pls_numeric(out, label)
+    return out
+
+
+def _pls_center_scale(x: np.ndarray, y: np.ndarray, scale: bool, label: str) -> tuple[np.ndarray, np.ndarray, dict, int]:
+    if len(y) < 2:
+        raise ValueError(f"{label}: PLSの学習区画に2試料以上が必要です。分割数を減らしてください。")
+    maximum = float(np.max(np.abs(y)))
+    if maximum == 0 or np.ptp(y / maximum) <= 128 * np.finfo(float).eps:
+        raise ValueError(f"{label}: 目的変数が一定値またはほぼ一定値のためPLSを学習できません。分割や目的変数を確認してください。")
+    _pls_numeric(y, f"{label}の目的変数")
+    mean_x = x.mean(axis=0)
+    std_x = x.std(axis=0, ddof=1) if scale else np.ones(x.shape[1])
+    std_x = np.where(std_x == 0, 1.0, std_x)
+    mean_y = float(y.mean())
+    std_y = float(y.std(ddof=1))
+    if std_y <= 0 or not np.isfinite(std_y):
+        raise ValueError(f"{label}: 目的変数の分散を安定に計算できません。")
+    z_x = (x - mean_x) / std_x
+    z_y = (y - mean_y) / std_y
+    if not np.isfinite(z_x).all() or not np.isfinite(z_y).all():
+        raise ValueError(f"{label}: PLSの中心化・スケーリングが不安定です。入力単位を確認してください。")
+    try:
+        rank = int(np.linalg.matrix_rank(z_x - z_x.mean(axis=0)))
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(f"{label}: 学習行列のランクを計算できません。") from exc
+    cap = min(len(y) - 1, x.shape[1], rank)
+    if cap < 1:
+        raise ValueError(f"{label}: 前処理後の学習行列のランクが0です。前処理や試料を確認してください。")
+    state = {"xMean": mean_x.tolist(), "xScale": std_x.tolist(), "xScaleDdof": 1,
+             "yMean": mean_y, "yScale": std_y, "yScaleDdof": 1, "rank": rank,
+             "scalePredictors": scale, "targetStandardizedInternally": True}
+    return z_x, z_y, state, cap
+
+
+def _pls_fit(z_x: np.ndarray, z_y: np.ndarray, components: int, label: str):
+    import warnings as pywarnings
+    from sklearn.cross_decomposition import PLSRegression
+    from sklearn.exceptions import ConvergenceWarning
+
+    try:
+        with pywarnings.catch_warnings(record=True) as caught:
+            pywarnings.simplefilter("always")
+            model = PLSRegression(n_components=components, scale=False, max_iter=1000, tol=1e-10)
+            model.fit(z_x, z_y)
+        if any(issubclass(item.category, ConvergenceWarning) for item in caught):
+            raise ValueError(f"{label}: PLSが収束しませんでした。成分数や入力データを確認してください。")
+        if not np.isfinite(model.coef_).all() or not np.isfinite(model.intercept_).all():
+            raise ValueError(f"{label}: PLSの係数が有限値になりません。成分数や入力単位を確認してください。")
+        if len(model.n_iter_) == 0:
+            raise ValueError(f"{label}: 有効なPLS成分を推定できません。")
+        return model
+    except ValueError as exc:
+        if re.search(r"[ぁ-んァ-ン一-龥]", str(exc)):
+            raise
+        raise ValueError(f"{label}: PLSの推定が不安定です。成分数・試料数・入力単位を確認してください。") from exc
+    except Exception as exc:
+        raise ValueError(f"{label}: PLSを計算できません。前処理や分割設定を確認してください。") from exc
+
+
+def _pls_predict(model, processed: np.ndarray, scaling: dict, label: str) -> np.ndarray:
+    try:
+        z_x = (processed - np.array(scaling["xMean"])) / np.array(scaling["xScale"])
+        predictions = model.predict(z_x).reshape(-1) * scaling["yScale"] + scaling["yMean"]
+    except Exception as exc:
+        raise ValueError(f"{label}: PLSの検証予測を計算できません。") from exc
+    if not np.isfinite(predictions).all():
+        raise ValueError(f"{label}: PLS予測が有限値になりません。入力単位や成分数を確認してください。")
+    return predictions
+
+
+def _pls_splits(indices: np.ndarray, cv_groups: np.ndarray | None, folds: int, seed: int, label: str):
+    from sklearn.model_selection import GroupKFold, KFold
+
+    available = len(np.unique(cv_groups[indices])) if cv_groups is not None else len(indices)
+    actual = min(folds, available)
+    if actual < 2:
+        raise ValueError(f"{label}: 内側CVに2つ以上のグループまたは試料が必要です。外側分割数やCVグループを変更してください。")
+    if cv_groups is None:
+        iterator = KFold(n_splits=actual, shuffle=True, random_state=seed).split(indices)
+    else:
+        iterator = GroupKFold(n_splits=actual).split(indices, groups=cv_groups[indices])
+    return [(indices[train], indices[test], test) for train, test in iterator], actual
+
+
+def _pls_select(raw: np.ndarray, y: np.ndarray, wavelengths: np.ndarray, indices: np.ndarray,
+                cv_groups: np.ndarray | None, settings: dict, pls: dict, label: str) -> dict:
+    splits, inner_folds = _pls_splits(indices, cv_groups, 3, pls["seed"], label)
+    prepared = []
+    selection_x, _ = _pls_preprocess_fit(raw[indices], wavelengths, settings, label)
+    _, _, _, selection_bound = _pls_center_scale(selection_x, y[indices], pls["scale"], label)
+    cap = min(pls["maxComponents"], selection_bound)
+    for number, (train, test, test_local) in enumerate(splits, 1):
+        fold_label = f"{label}・内側{number}"
+        train_x, preprocessing = _pls_preprocess_fit(raw[train], wavelengths, settings, fold_label)
+        validation_x = _pls_preprocess_apply(raw[test], preprocessing, fold_label)
+        z_x, z_y, scaling, bound = _pls_center_scale(train_x, y[train], pls["scale"], fold_label)
+        cap = min(cap, bound)
+        prepared.append({"train": train, "test": test, "testLocal": test_local,
+                         "zX": z_x, "zY": z_y, "validationX": validation_x,
+                         "preprocessing": preprocessing, "scaling": scaling})
+    curve = []
+    for components in range(1, cap + 1):
+        predictions = np.full(len(indices), np.nan)
+        for number, item in enumerate(prepared, 1):
+            model = _pls_fit(item["zX"], item["zY"], components, f"{label}・内側{number}")
+            predictions[item["testLocal"]] = _pls_predict(model, item["validationX"], item["scaling"], label)
+        rmse = float(np.sqrt(np.mean((predictions - y[indices]) ** 2)))
+        if not np.isfinite(rmse):
+            raise ValueError(f"{label}: 内側CVの誤差を有限値で計算できません。")
+        curve.append({"components": components, "rmseCV": rmse})
+    best = min(item["rmseCV"] for item in curve)
+    tolerance = max(1e-12 * float(y[indices].std()), 1e-10 * best, np.finfo(float).tiny)
+    chosen = next(item["components"] for item in curve if item["rmseCV"] <= best + tolerance)
+    return {"components": chosen, "innerFolds": inner_folds, "maxComponents": cap, "curve": curve,
+            "inner": [{"fold": number, "trainIndices": item["train"].tolist(),
+                       "testIndices": item["test"].tolist(), "preprocessing": item["preprocessing"],
+                       "scaling": item["scaling"]} for number, item in enumerate(prepared, 1)]}
+
+
+def _analyze_pls(df: pd.DataFrame, settings: dict, requested: dict, columns: list[str],
+                 wavelengths: np.ndarray, ids: list[str], groups: list[str]) -> tuple[dict, dict, dict]:
+    """Nested CV starts from raw columns, independently of exploratory PCA/AQ."""
+    pls = requested.get("pls")
+    if not isinstance(pls, dict) or not isinstance(pls.get("enabled"), bool):
+        raise ValueError("PLSの有効・無効設定を確認してください。")
+    if not pls["enabled"]:
+        raise ValueError("PLSが無効です。")
+    target = pls.get("targetColumn")
+    if not isinstance(target, str) or target not in df.columns:
+        raise ValueError("PLSの数値目的変数を選択してください。")
+    if target in requested["wavelengthColumns"] or target in {requested.get("idColumn"), pls.get("cvGroupColumn")}:
+        raise ValueError("PLSの目的変数には波長列・試料ID列・CVグループ列を指定できません。")
+    if len(df) < 8:
+        raise ValueError("二重CVによるPLSには8試料以上が必要です。")
+    if pd.api.types.is_bool_dtype(df[target]):
+        raise ValueError("PLSの目的変数には真偽値やクラス名ではなく連続した数値列を指定してください。")
+    y = pd.to_numeric(df[target], errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(y).all():
+        raise ValueError("PLSの目的変数に欠損・非数値・無限大があります。目的変数は補完せず、すべて有効な数値が必要です。")
+    maximum = float(np.max(np.abs(y)))
+    if maximum == 0 or np.ptp(y / maximum) <= 128 * np.finfo(float).eps:
+        raise ValueError("PLSの目的変数が一定値またはほぼ一定値です。変動のある数値列を選択してください。")
+    _pls_numeric(y, "PLS目的変数")
+    max_components = _integer(pls.get("maxComponents", 5), "PLSの最大成分数", 1)
+    folds = _integer(pls.get("folds", 5), "PLSの外側分割数", 2)
+    if max_components > 10 or folds > 10:
+        raise ValueError("PLSの最大成分数は1〜10、外側分割数は2〜10で指定してください。")
+    seed = _integer(pls.get("seed", 42), "PLSの乱数シード", 0)
+    if seed > 2 ** 31 - 1:
+        raise ValueError("PLSの乱数シードは0〜2147483647で指定してください。")
+    split = pls.get("split", "kfold")
+    scale = pls.get("scale", True)
+    if not isinstance(split, str) or split not in {"kfold", "group"} or not isinstance(scale, bool):
+        raise ValueError("PLSの分割方式またはスケーリング設定を確認してください。")
+    cv_column = pls.get("cvGroupColumn") if split == "group" else None
+    cv_groups = None
+    if split == "group":
+        if not isinstance(cv_column, str) or cv_column not in df.columns:
+            raise ValueError("グループ分割ではCVグループの列を選択してください。")
+        cv_groups = np.array(_labels(df, cv_column, "CVグループ"))
+        if len(np.unique(cv_groups)) < 3:
+            raise ValueError("二重GroupKFoldには3つ以上のCVグループが必要です。")
+    raw = df.loc[:, columns].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    _pls_numeric(raw, "PLSスペクトル")
+    _pls_check_shape(len(df), len(columns))
+    outer_splits, actual_folds = _pls_splits(np.arange(len(df)), cv_groups, folds, seed, "外側CV")
+    estimated_work = len(df) * len(columns) * (actual_folds + 1) * 4 * (
+        min(len(df), len(columns)) + max_components * (max_components + 1) // 2
+    )
+    if estimated_work > MAX_PLS_WORK:
+        raise ValueError("二重CVのPLS計算量が初版の上限を超えます。波長数・試料数・最大成分数・分割数を減らしてください。")
+    applied = {"enabled": True, "targetColumn": target, "maxComponents": max_components,
+               "folds": actual_folds, "split": split, "cvGroupColumn": cv_column, "seed": seed, "scale": scale}
+    warnings = ["PLSの性能指標は外側CVの未学習試料に対する予測です。内側CV曲線・校正値は性能評価と分けて解釈してください。"]
+    if folds != actual_folds:
+        warnings.append(f"PLSの外側分割数を利用可能な試料数・CVグループ数に合わせて{actual_folds}に制限しました。")
+    if split == "group":
+        warnings.append("GroupKFoldは同じCVグループを同一区画に保持する決定的な分割です。乱数シードは分割に使用しません。")
+    oof = np.full(len(df), np.nan)
+    baseline = np.full(len(df), np.nan)
+    fold_ids = np.zeros(len(df), dtype=int)
+    fold_models = []
+    fold_records = []
+    caps = []
+    inner_counts = []
+    for number, (train, test, _) in enumerate(outer_splits, 1):
+        label = f"外側CV {number}"
+        selection = _pls_select(raw, y, wavelengths, train, cv_groups, settings, applied, label)
+        train_x, preprocessor = _pls_preprocess_fit(raw[train], wavelengths, settings, label)
+        test_x = _pls_preprocess_apply(raw[test], preprocessor, label)
+        z_x, z_y, scaling, _ = _pls_center_scale(train_x, y[train], scale, label)
+        model = _pls_fit(z_x, z_y, selection["components"], label)
+        oof[test] = _pls_predict(model, test_x, scaling, label)
+        baseline[test] = float(y[train].mean())
+        fold_ids[test] = number
+        caps.append(selection["maxComponents"])
+        inner_counts.append(selection["innerFolds"])
+        fold_models.append({"fold": number, "components": selection["components"], "train": len(train), "test": len(test)})
+        fold_records.append({"fold": number, "trainIndices": train.tolist(), "testIndices": test.tolist(),
+                             "preprocessing": preprocessor, "scaling": scaling, "selection": selection})
+    selection = _pls_select(raw, y, wavelengths, np.arange(len(df)), cv_groups, settings, applied, "最終モデル選択CV")
+    caps.append(selection["maxComponents"])
+    inner_counts.append(selection["innerFolds"])
+    if min(caps) < max_components:
+        warnings.append(f"PLS候補成分数を各選択ループの全内側学習区画の試料数・波長数・ランクに制限しました（最小上限{min(caps)}、最終選択上限{selection['maxComponents']}）。")
+    final_x, final_preprocessor = _pls_preprocess_fit(raw, wavelengths, settings, "最終モデル")
+    z_x, z_y, final_scaling, _ = _pls_center_scale(final_x, y, scale, "最終モデル")
+    final_model = _pls_fit(z_x, z_y, selection["components"], "最終モデル")
+    calibration = _pls_predict(final_model, final_x, final_scaling, "最終モデル")
+    beta_z = np.asarray(final_model.coef_).reshape(-1)
+    if len(beta_z) != len(columns):
+        raise ValueError("PLS係数の形状が解析環境と一致しません。")
+    beta = beta_z * final_scaling["yScale"] / np.array(final_scaling["xScale"])
+    at_mean = float(final_model.predict(np.zeros((1, len(columns)))).reshape(-1)[0] * final_scaling["yScale"] + final_scaling["yMean"])
+    intercept = float(at_mean - np.array(final_scaling["xMean"]) @ beta)
+    if not np.isfinite(beta).all() or not np.isfinite(intercept) or not np.isfinite(oof).all():
+        raise ValueError("PLSの係数・予測が有限値になりません。入力単位を確認してください。")
+    residual = y - oof
+    total = float(np.sum((y - y.mean()) ** 2))
+    metrics = {"rmseCV": float(np.sqrt(np.mean(residual ** 2))), "maeCV": float(np.mean(np.abs(residual))),
+               "r2CV": float(1 - np.sum(residual ** 2) / total), "biasCV": float(np.mean(oof - y)),
+               "baselineRmseCV": float(np.sqrt(np.mean((baseline - y) ** 2))),
+               "rmseCalibration": float(np.sqrt(np.mean((calibration - y) ** 2))),
+               "r2Calibration": float(1 - np.sum((calibration - y) ** 2) / total)}
+    if not all(np.isfinite(value) for value in metrics.values()):
+        raise ValueError("PLS指標を有限値で計算できません。目的変数の単位や変動を確認してください。")
+    definition = (
+        "単一数値目的変数のPLS回帰。外側CVの各学習区画内で内側CV（最大3分割）により成分数を選び、"
+        "全試料の外側OOF予測を元の行順へ戻してRMSE・MAE・R²・biasを計算します。"
+        "各内側/外側の中央値補完、MSC参照、中心化・スケーリングはその学習区画だけから推定します。"
+        "同点は少ない成分を優先します。curveは全データ内CVによる最終モデル選択用で、外側性能指標ではありません。"
+        "校正値は全データで学習した見かけの適合度です。baselineは各外側学習区画の目的変数平均による予測。"
+        "residuals=実測目的値−OOF予測、biasCV=平均(OOF予測−実測目的値)。"
+        "scaleは説明変数の標準偏差(ddof=1)による標準化で、目的変数は数値安定性のため常に内部標準化し元単位へ戻します。"
+        "係数は最終モデルの全データ学習前処理後Xに対するものです。予測=X_processed @ values + intercept。"
+        "元スペクトルへ直接掛ける係数ではありません。校正前処理・中心化・尺度はpls_model.jsonへ記録します。"
+        "クラス分類・PLS-DAや、独立した未知データでの性能確認は行っていません。"
+    )
+    result = {"targetColumn": target, "method": "nested-group-kfold" if split == "group" else "nested-kfold",
+              "selectedComponents": selection["components"], "folds": actual_folds,
+              "innerFolds": min(inner_counts), "seed": seed, "scale": scale, "metrics": metrics,
+              "observed": y.tolist(), "predictedCV": oof.tolist(), "predictedCalibration": calibration.tolist(),
+              "residuals": residual.tolist(), "fold": fold_ids.tolist(), "ids": ids, "groups": groups,
+              "curve": selection["curve"], "foldModels": fold_models,
+              "coefficients": {"wavelengths": final_preprocessor["wavelengths"], "values": beta.tolist(), "intercept": intercept},
+              "warnings": warnings, "definition": definition}
+    from sklearn import __version__ as sklearn_version
+    model_record = {"schemaVersion": "1.0", "engineVersion": ENGINE_VERSION, "settings": applied,
+                    "requestedPLS": pls, "analysisSettings": {**settings, "pls": applied},
+                    "versions": {"numpy": np.__version__, "pandas": pd.__version__, "scikit-learn": sklearn_version},
+                    "targetColumn": target, "columns": columns, "ids": ids, "cvGroups": cv_groups.tolist() if cv_groups is not None else None,
+                    "indexConvention": "trainIndices/testIndicesは入力行順の0始まり位置。foldは1始まり。",
+                    "outerFolds": fold_records, "finalSelection": selection,
+                    "finalPreprocessing": final_preprocessor, "finalScaling": final_scaling,
+                    "coefficients": result["coefficients"], "definition": definition,
+                    "estimatedWork": estimated_work, "metrics": metrics, "warnings": warnings}
+    prediction_table = pd.DataFrame({"sample_id": ids, "group": groups, "observed": y, "predicted_cv": oof,
+                                     "residual_cv": residual, "outer_fold": fold_ids, "baseline_cv": baseline,
+                                     "predicted_calibration": calibration})
+    exports = {"data/pls_predictions.csv": _csv(prediction_table),
+               "data/pls_cv_curve.csv": _csv(pd.DataFrame(selection["curve"])),
+               "data/pls_folds.csv": _csv(pd.DataFrame(fold_models)),
+               "data/pls_coefficients.csv": _csv(pd.DataFrame({"wavelength_nm": final_preprocessor["wavelengths"], "coefficient": beta})),
+               "pls_model.json": json.dumps(model_record, ensure_ascii=False, indent=2, allow_nan=False)}
+    return result, applied, exports
+
+
 def analyze(df: pd.DataFrame, config: dict) -> dict:
     """Apply a validated pipeline and return data, plots' arrays and text exports.
 
@@ -323,6 +661,10 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
         raise ValueError(VARIABLE_LIMIT_MESSAGE)
     if len(df) * len(entries) > MAX_MATRIX_ELEMENTS:
         raise ValueError("解析行列は200万要素（試料数×選択波長数）までです。試料数または波長列・範囲を減らしてください。")
+    if isinstance(config.get("pls"), dict) and config["pls"].get("enabled") is True:
+        # Reject oversized PLS jobs before even the exploratory PCA allocates
+        # or factorizes a matrix for an analysis that cannot be completed.
+        _pls_check_shape(len(df), len(entries))
     wavelengths = np.array([wl for wl, _ in entries], dtype=float)
     columns = [column for _, column in entries]
     ids = _labels(df, config.get("idColumn"), "試料ID")
@@ -528,7 +870,7 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
         "不等間隔波長はSG前に同点数の等間隔格子へ線形補間します。補間は測定分解能を高めるものではありません。\n"
         f"\nAquagramの定義: {AQUAGRAM_DEFINITION}\n基準: {reference_label}\n"
         "settings.jsonの直下は適用設定、_provenanceは元設定・補間・補完値・実行版の記録です。\n"
-        "この解析は探索的な表示であり、統計的有意差や未知試料への予測性能を評価しません。\n"
+        "PCA・Aquagramは探索的な表示であり、統計的有意差や未知試料への予測性能を評価しません。\n"
         + ("\n解析時の通知:\n" + "\n".join(f"- {warning}" for warning in warnings) + "\n" if warnings else "")
     )
     result = {
@@ -547,4 +889,24 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
             "README.txt": readme,
         },
     }
+    pls_option = config.get("pls")
+    if pls_option is not None:
+        if not isinstance(pls_option, dict) or not isinstance(pls_option.get("enabled"), bool):
+            raise ValueError("PLSの有効・無効設定を確認してください。")
+        if pls_option["enabled"]:
+            pls_result, pls_applied, pls_exports = _analyze_pls(
+                df, applied, config, columns, original_wavelengths, ids, groups
+            )
+            applied["pls"] = pls_applied
+            result["pls"] = pls_result
+            warnings.extend(pls_result["warnings"])
+            result["exports"].update(pls_exports)
+            settings_export["pls"] = pls_applied
+            result["exports"]["settings.json"] = json.dumps(settings_export, ensure_ascii=False, indent=2, allow_nan=False)
+            result["exports"]["README.txt"] += (
+                "\nPLS回帰:\n" + pls_result["definition"] + "\n"
+                "data/pls_predictions.csvは外側OOF予測と校正予測を分けて保存しています。\n"
+                "data/pls_cv_curve.csvは最終モデルの成分数選択用の内側CV曲線です。\n"
+                "pls_model.jsonには各CV区画の学習行、前処理統計、最終モデルと係数の定義を記録しています。\n"
+            )
     return result

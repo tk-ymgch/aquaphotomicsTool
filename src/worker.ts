@@ -167,7 +167,7 @@ _response_json
     }
   }
   await ensurePackages(pyodide, ['scipy', 'scikit-learn'], request.id);
-  progress(request.id, 'analyze', '前処理、主成分分析、Aquagramを計算しています。');
+  progress(request.id, 'analyze', request.config.pls?.enabled ? '前処理、PCA、Aquagram、PLSの二重交差検証を計算しています。' : '前処理、主成分分析、Aquagramを計算しています。');
   pyodide.globals.set('_config_json', JSON.stringify(request.config));
   try {
     return await jsonResult<AnalysisResult>(pyodide, `

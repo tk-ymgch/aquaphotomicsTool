@@ -48,7 +48,7 @@ def test_demo_is_deterministic_and_always_marked_artificial():
     df, summary = wb.demo_dataset()
     again, _ = wb.demo_dataset()
     pd.testing.assert_frame_equal(df, again)
-    assert df.shape == (45, 64)
+    assert df.shape == (45, 65)
     assert len(summary["wavelengthColumns"]) == 61
     assert "人工" in summary["name"]
     assert summary["artificial"] is True

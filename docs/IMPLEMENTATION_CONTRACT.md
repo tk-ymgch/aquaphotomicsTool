@@ -1,4 +1,16 @@
-# 初版の実装契約
+# 実装契約
+
+## v1.2の追加
+
+- AnalysisConfig.plsは任意。単一数値目的変数、最大成分1〜10、outer folds2〜10、seed0〜2147483647。無効時は従来PCA/Aquagram解析を維持。
+- PLSは生データ列から独立したtrain-only前処理を使用。outer学習区画内でinner CV（最大3分割）で成分選択、outer OOFで性能評価。GroupKFoldでは内側・外側とも同一CV群の混入を防ぐ。
+- 大きさの上限は500試料/2000波長/10万行列要素と推定計算量。PCA/Aquagramの従来上限は維持。
+- PLSResult、PLSConfig、ComparisonRunの正式型はsrc/types.ts。src/AdvancedPanels.tsxのplsFiguresとcomparisonFiguresを画面・PNG保存で共有する。
+- src/settings.tsは版付き設定JSONと旧settings.jsonのrequestedConfigを検証して再読込する。外部JSONは1 MiB上限。結果内の大きなprovenanceは内部で要求設定だけ抽出して現行JSONへ再包装する。
+- 条件比較は同一データの最大4件/推定96 MiBのメモリー内スナップショット。新データ/シートの読込成功時に消去する。比較ZIPには各条件の結果・設定・同じ表示図を保存する。
+- R交換は結果ZIPのr/にbase R scriptと手順を同梱する。ブラウザーからRscriptを呼んだり外部へデータ送信したりしない。aquap2実行基盤は別工程。
+
+## 基本構成
 
 - React + Vite + TypeScript、Pyodide Web Worker。Streamlit不要。
 - データ型はsrc/types.ts。変更は親に連絡。UI担当はApp.tsx/styles.css/Plot.tsxのみ、Worker担当はworker.ts/client.ts/vite-env.d.ts、Python担当はpython/workbench.py/tests/test_workbench.py/samplesのみ。

@@ -271,7 +271,7 @@ def run(destination: Path) -> dict:
     if qa.exists():
         verification_files = sorted(path.relative_to(repo).as_posix() for path in qa.rglob("*")
                                     if path.is_file() and not set(part.casefold() for part in path.relative_to(qa).parts) & EXCLUDED_PARTS
-                                    and (path.name == "browser-export-verification.json" or path.suffix.casefold() in {".jpg", ".jpeg"}))
+                                    and (path.name in {"browser-export-verification.json", "v1.2-browser-export-verification.json", "v1.2-comparison-verification.json", "v1.2-ui-verification.json"} or path.suffix.casefold() in {".jpg", ".jpeg"}))
     # Validate all included files before creating the first artifact.
     for root, relatives in ((dist, build_files), (repo, verification_files)):
         for relative in relatives:
