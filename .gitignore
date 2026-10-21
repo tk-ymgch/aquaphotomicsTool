@@ -11,4 +11,6 @@ __pycache__/
 *.pyc
 qa/
 .pytest_cache/
+build/
+*.egg-info/
 

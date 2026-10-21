@@ -3,7 +3,7 @@ import type { WorkerRequest, WorkerResponse } from './client';
 
 interface PyodideRuntime {
   globals: { set(name: string, value: unknown): void; has(name: string): boolean; delete(name: string): void };
-  FS: { writeFile(path: string, data: string, options: { encoding: 'utf8' }): void };
+  FS: { writeFile(path: string, data: string | Uint8Array, options?: { encoding: 'utf8' }): void };
   loadPackage(names: string[]): Promise<void>;
   runPythonAsync(code: string): Promise<unknown>;
 }
@@ -102,11 +102,17 @@ async function initialize(pythonUrl: string, id: number): Promise<PyodideRuntime
         throw new Error('解析プログラムの内容を確認できませんでした。ページを再読み込みしてください。');
       }
       pyodide.FS.writeFile('/home/pyodide/workbench.py', source, { encoding: 'utf8' });
+      const packageUrl = new URL('aquap2py.zip', sourceUrl);
+      const packageResponse = await fetch(packageUrl, {cache:'no-cache'});
+      if (!packageResponse.ok) throw new Error(`aquap2pyを取得できませんでした（HTTP ${packageResponse.status}）。`);
+      pyodide.FS.writeFile('/home/pyodide/aquap2py.zip',new Uint8Array(await packageResponse.arrayBuffer()));
       await pyodide.runPythonAsync(`
 import sys
 import json as _json
 if '/home/pyodide' not in sys.path:
     sys.path.insert(0, '/home/pyodide')
+if '/home/pyodide/aquap2py.zip' not in sys.path:
+    sys.path.insert(0, '/home/pyodide/aquap2py.zip')
 from workbench import inspect_bytes, demo_dataset, analyze
 _dataset = None
 `);

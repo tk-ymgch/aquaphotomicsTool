@@ -1,6 +1,6 @@
 {
   "name": "aquaphotomics-workbench",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.25.0",
@@ -29,5 +29,5 @@
     "typescript": "7.0.2",
     "vite": "8.3.3"
   },
-  "description": "Research workbench with browser Python preprocessing and optional local aquap2 public API execution."
+  "description": "Aquaphotomics research workbench with aquap2py, a scoped browser Python port validated against aquap2."
 }

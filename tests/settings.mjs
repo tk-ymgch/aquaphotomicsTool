@@ -26,7 +26,7 @@ function check(name, test) { try { test(); passed++; } catch (error) { console.e
 check('new document roundtrip and detached snapshots', () => {
   const input = structuredClone(config), doc = createSettingsDocument(input, { name: summary.name });
   assert.equal(doc.format, 'aquaphotomics-workbench-settings');
-  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.4');
+  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.5');
   assert.equal(doc.source.sheet, null); assert.ok(Number.isFinite(Date.parse(doc.createdAt)));
   input.range[0] = 999; input.wavelengthColumns.length = 0;
   assert.deepEqual(decode(doc), config);
@@ -125,5 +125,15 @@ check('v1.4 preserves only the engine choice and never a local connection creden
   assert.equal(JSON.stringify(document).includes('8787'), false);
   assert.deepEqual(decode({ ...createSettingsDocument(config, null), appVersion: '1.3' }), config);
   assert.throws(() => decode({ ...config, analysisEngine: 'source-harness' }), /解析エンジン/);
+});
+check('aquap2py roundtrip keeps real uneven wavelengths and no connection secrets', () => {
+  const wavelengthColumns=[1300,1303,1310,1315,1320].map(wavelength=>({column:`wl_${wavelength}`,wavelength}));
+  const dataset={...summary,columns:['sample_id','group',...wavelengthColumns.map(w=>w.column)],wavelengthColumns};
+  const cfg={...config,analysisEngine:'aquap2py',window:5,wavelengthColumns:wavelengthColumns.map(w=>w.column),range:[1300,1320],aquagramWavelengths:[1300,1303,1320],aquagramTolerance:0};
+  const doc=createSettingsDocument({...cfg,token:'never-store',endpoint:'private-transport'},null);
+  assert.deepEqual(decode(doc,dataset),cfg);
+  assert.ok(!JSON.stringify(doc).includes('never-store'));
+  assert.ok(!JSON.stringify(doc).includes('private-transport'));
+  for (const appVersion of ['1.2','1.3','1.4']) assert.deepEqual(decode({...createSettingsDocument(config,null),appVersion}),config);
 });
 console.log(`PASS: ${passed} settings checks (roundtrip, legacy provenance, strict validation, columns, SG grid, PLS, safety)`);

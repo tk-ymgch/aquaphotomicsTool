@@ -1,0 +1,1130 @@
+{
+  "schemaVersion": 1,
+  "implementation": {
+    "name": "aquap2py",
+    "version": "0.1.0",
+    "unofficial": true
+  },
+  "reference": {
+    "name": "aquap2",
+    "version": "0.4.5",
+    "commit": "d31c1231bf71f0e73f1a630a32934602782be488"
+  },
+  "completeCompatibility": false,
+  "apiEntries": [
+    {
+      "name": "calculateVariable",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "R式からclass/numeric変数を追加。任意R式の評価互換は未対応。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/mod_modifyDatasets.r#L1156",
+      "referenceSignature": "as.pairlist(alist(dataset = , cexpr = expression(\"\"), name = NULL, type = \"c\"))"
+    },
+    {
+      "name": "combineVariable",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "複数header列を結合して新class変数を作る。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/mod_modifyDatasets.r#L1044",
+      "referenceSignature": "as.pairlist(alist(dataset = , sourceVars = NULL, name = NULL, sep = \"_\"))"
+    },
+    {
+      "name": "do_addNoise",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "校正noise datasetからsdNorm/sdUnif/extrema/staticノイズを付加。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_noise.r#L243",
+      "referenceSignature": "as.pairlist(alist(dataset = , noiseFile = \"def\", md = getmd()))"
+    },
+    {
+      "name": "do_avg",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "任意class変数でスペクトルとheaderを群平均し集約。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L167",
+      "referenceSignature": "as.pairlist(alist(dataset = , clv = NULL, inParallel = TRUE))"
+    },
+    {
+      "name": "do_blowup",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "群別の再標本抽出・平均で人工行を拡張し由来列を保持。上流cstは未実装・無視される。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L717",
+      "referenceSignature": "as.pairlist(alist(dataset = , grp = NULL, tn = \"x10\", an = \"100%\", cst = TRUE, conf = TRUE, pred = TRUE, replace = TRUE))"
+    },
+    {
+      "name": "do_detrend",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "source/target波長範囲を指定したデトレンド。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L479",
+      "referenceSignature": "as.pairlist(alist(dataset = , src = NULL, trg = \"src\", exportModel = FALSE))"
+    },
+    {
+      "name": "do_dptSeq",
+      "kind": "function",
+      "status": "partial",
+      "notes": "Python数値binding: preprocess（Rと同名の公開APIではない）。dpt文字列の順序実行。初版対象はsgol/snv/mscのみ。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L529",
+      "referenceSignature": "as.pairlist(alist(dataset = , dptSeq = , extraModelList = NULL, silent = TRUE))",
+      "pythonBinding": "preprocess"
+    },
+    {
+      "name": "do_emsc",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "1～2本のloading/回帰ベクトルによるEMSC。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L285",
+      "referenceSignature": "as.pairlist(alist(dataset = , vecLoad = NULL, exportModel = FALSE))"
+    },
+    {
+      "name": "do_gapDer",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "prospectr::gapDerの次数/窓/segment/deltaWと波長端の処理。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L350",
+      "referenceSignature": "as.pairlist(alist(dataset = , m = 1, w = 1, s = 1, deltaW = , exportModel = FALSE))"
+    },
+    {
+      "name": "do_msc",
+      "kind": "function",
+      "status": "partial",
+      "notes": "Python数値binding: msc（Rと同名の公開APIではない）。初版は有限行列・平均参照または明示参照の数値演算。S4/extMscModel/exportModelの完全互換なし。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L108",
+      "referenceSignature": "as.pairlist(alist(dataset = , ref = NULL, extMscModel = NULL, exportModel = FALSE))",
+      "pythonBinding": "msc"
+    },
+    {
+      "name": "do_resampleNIR",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "pracma::interp1のmethod/targetWls/tbyと列名更新。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L562",
+      "referenceSignature": "as.pairlist(alist(dataset = , targetWls = NULL, tby = 0.5, method = get(\"stn\", envir = .ap2)$gen_resample_method))"
+    },
+    {
+      "name": "do_sgolay",
+      "kind": "function",
+      "status": "partial",
+      "notes": "Python数値binding: sgolay（Rと同名の公開APIではない）。初版はsignalのts=1・端点を含むSG数値演算。S4/exportModel全挙動は未対応。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L25",
+      "referenceSignature": "as.pairlist(alist(dataset = , p = 2, n = 21, m = 0, exportModel = FALSE))",
+      "pythonBinding": "sgolay"
+    },
+    {
+      "name": "do_snv",
+      "kind": "function",
+      "status": "partial",
+      "notes": "Python数値binding: snv（Rと同名の公開APIではない）。初版は行ごとの平均中心化と標本SD。S4/exportModel全挙動は未対応。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L64",
+      "referenceSignature": "as.pairlist(alist(dataset = , exportModel = FALSE))",
+      "pythonBinding": "snv"
+    },
+    {
+      "name": "esl",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "exportSampleListの別名。実験計画・ランダム化・sample-list出力。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_SampleList.r#L308",
+      "referenceSignature": "pairlist(md = getmd(), form = \"def\", rnd = TRUE, showFirstRows = TRUE, timeEstimate = FALSE)"
+    },
+    {
+      "name": "exportSampleList",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "metadataから実験計画・反復・連続走査・対照を組み立てxls/txt出力。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_SampleList.r#L249",
+      "referenceSignature": "pairlist(md = getmd(), form = \"def\", rnd = TRUE, showFirstRows = TRUE, timeEstimate = FALSE)"
+    },
+    {
+      "name": "gdmm",
+      "kind": "function",
+      "status": "partial",
+      "notes": "初版は単一dataset・限定dpt・平均中心化PCA・classic/classic-diffのみ。全cube分割/他modelなし。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_generateDatasets.r#L1566",
+      "referenceSignature": "as.pairlist(alist(dataset = , ap = getap(), noiseFile = \"def\", tempFile = \"def\"))",
+      "pythonBinding": "gdmm"
+    },
+    {
+      "name": "genFolderStr",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "標準実験フォルダーとmetadata/analysis procedureテンプレートを作成。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L447",
+      "referenceSignature": "NULL"
+    },
+    {
+      "name": "genNoiseRecExp",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "noise記録実験用フォルダー/metadataの生成。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_noise.r#L280",
+      "referenceSignature": "NULL"
+    },
+    {
+      "name": "genTempCalibExp",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "温度校正実験計画をTcenter/Tdelta/stepBy/replsから生成。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r#L921",
+      "referenceSignature": "pairlist(Tcenter = NULL, Tdelta = 5, stepBy = 1, repls = 4)"
+    },
+    {
+      "name": "getFullData",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "raw/header/TRH読込、metadata統合、outlier/保存/再読込を統括。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData.r#L617",
+      "referenceSignature": "pairlist(md = getmd(), filetype = \"def\", naString = \"NA\", slType = \"def\", trhLog = \"def\", multiplyRows = \"def\", ttl = TRUE, stf = TRUE, dol = \"def\")"
+    },
+    {
+      "name": "getap",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "analysis procedure Rファイル読込・既定値・上書き引数・検証。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_metadata.r#L502",
+      "referenceSignature": "as.pairlist(alist(fn = \"def\", ... = ))"
+    },
+    {
+      "name": "getcd",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "cubeの指定setから正式aquap_dataを取得。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L936",
+      "referenceSignature": "as.pairlist(alist(cube = , index = ))"
+    },
+    {
+      "name": "getcm",
+      "kind": "function",
+      "status": "partial",
+      "notes": "初版は限定cube内のPCA/AQ取得のみ。PLSR/SIMCA等は未対応。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L971",
+      "referenceSignature": "as.pairlist(alist(cube = , index = , what = \"pca\"))",
+      "pythonBinding": "getcm"
+    },
+    {
+      "name": "getmd",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "metadata Rファイルを検証しaquap_mdに変換。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_metadata.r#L198",
+      "referenceSignature": "as.pairlist(alist(fn = \"def\", ... = ))"
+    },
+    {
+      "name": "gfd",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "getFullDataの別名。同じ全入出力契約が必要。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData.r#L689",
+      "referenceSignature": "pairlist(md = getmd(), filetype = \"def\", naString = \"NA\", slType = \"def\", trhLog = \"def\", multiplyRows = \"def\", ttl = TRUE, stf = TRUE, dol = \"def\")"
+    },
+    {
+      "name": "imp_searchAskColumns",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "headerのclass/numeric列の検出と対話的確認。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData.r#L1145",
+      "referenceSignature": "as.pairlist(alist(allC_var = , allY_var = , slType = .ap2$.slType))"
+    },
+    {
+      "name": "instAquap2Examples",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "0.4.5の公式サンプル導入helper。0.5.1では公開一覧から除去。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L558",
+      "referenceSignature": "NULL"
+    },
+    {
+      "name": "loadAQdata",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "metadataに対応するR-dataを復元。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData.r#L731",
+      "referenceSignature": "pairlist(md = getmd(), verbose = TRUE)"
+    },
+    {
+      "name": "plot_aqg",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "AQのpolar/linear、CI、有意差表、raw/avg/subtr spectra、PDF等。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/plot_aqg.r#L637",
+      "referenceSignature": "as.pairlist(alist(cube = , aps = \"def\", ... = ))"
+    },
+    {
+      "name": "plot_classifX_indepPred",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "独立datasetの分類予測・label対応・図表。上流XLS予測出力はtoxls=FALSEへ固定され未実装。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/plot_classif_gen.r#L404",
+      "referenceSignature": "as.pairlist(alist(indepDataset = , cube = , ccv = NULL, icv = NULL, pl = TRUE, toxls = \"def\", info = \"def\", confirm = \"def\", predList = NULL, apPlot = \"def\", ... = ))"
+    },
+    {
+      "name": "plot_cube",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "cube内のmodelを選択し標準描画を統括。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/plot_all.r#L4",
+      "referenceSignature": "as.pairlist(alist(x = , what = \"all\", ... = ))"
+    },
+    {
+      "name": "plot_pls_indepPred",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "独立datasetのPLSR予測、図/誤差/出力。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_plsr.r#L800",
+      "referenceSignature": "as.pairlist(alist(indepDataset = , cube = , cnv = NULL, inv = NULL, psd = \"def\", aps = \"def\", pl = TRUE, toxls = \"def\", ... = ))"
+    },
+    {
+      "name": "pls_outlier_getIndices",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "cubeのPLSR誤差範囲からoutlier indexを取得。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_plsr.r#L881",
+      "referenceSignature": "as.pairlist(alist(cube = , detRange = 0.5))"
+    },
+    {
+      "name": "printStdColnames",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "settingsに依存する標準header列名を表示。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L538",
+      "referenceSignature": "NULL"
+    },
+    {
+      "name": "reColor",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "header factor/数値列に対応するcolRepを再生成。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L1265",
+      "referenceSignature": "as.pairlist(alist(dataset = ))"
+    },
+    {
+      "name": "readHeader",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "sample-list型・行増殖・header prefix/型を扱う読込。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData.r#L1053",
+      "referenceSignature": "pairlist(md = getmd(), slType = \"def\", multiplyRows = \"def\")"
+    },
+    {
+      "name": "readSpectra",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "装置raw format/custom importerを選ぶスペクトル読込。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData.r#L58",
+      "referenceSignature": "pairlist(md = getmd(), filetype = \"def\", naString = \"NA\")"
+    },
+    {
+      "name": "saveAQdata",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "正式aquap_dataとmetadataに基づくR-data保存。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData.r#L716",
+      "referenceSignature": "as.pairlist(alist(dataset = , md = getmd(), verbose = TRUE))"
+    },
+    {
+      "name": "selectWls",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "連続波長範囲によるsubset。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_generateDatasets.r#L854",
+      "referenceSignature": "as.pairlist(alist(dataset = , from = , to = ))"
+    },
+    {
+      "name": "siWl",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "指定波長または近傍maxのスペクトルsubset。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L1103",
+      "referenceSignature": "as.pairlist(alist(dataset = , wl = , getMax = FALSE))"
+    },
+    {
+      "name": "siWlg",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "ot1.12/ot1.15または任意区間matrixを選択、任意で区間内算術平均。AUCとは別。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L1154",
+      "referenceSignature": "as.pairlist(alist(dataset = , avg = FALSE, wlg = \"ot1.12\"))"
+    },
+    {
+      "name": "ssc",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "criteria式による行抽出、include/keepECを保持。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L620",
+      "referenceSignature": "as.pairlist(alist(dataset = , criteria = , include = TRUE, keepEC = FALSE))"
+    },
+    {
+      "name": "ttap",
+      "kind": "function",
+      "status": "partial",
+      "notes": "初版はmatrix/波長/ID/群の簡略data構造。md/dol/reduceTRH/stf/S4全挙動なし。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_transformToAp2.r#L16",
+      "referenceSignature": "as.pairlist(alist(obj = , md = getmd(), dol = TRUE, ncpwl = 1, reduceTRH = FALSE, stf = TRUE))",
+      "pythonBinding": "ttap"
+    },
+    {
+      "name": "ttapM",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "上流でinternal-use-onlyと説明される縮小変換だがexportされる。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_transformToAp2.r#L46",
+      "referenceSignature": "as.pairlist(alist(obj = ))"
+    },
+    {
+      "name": "updateAquap2",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "0.4.5のGitHub更新helper。Python package更新との置換方針は未実装。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L493",
+      "referenceSignature": "pairlist(force = FALSE)"
+    },
+    {
+      "name": "updateSettings",
+      "kind": "function",
+      "status": "not-implemented",
+      "notes": "settings home・版・既定値・.Renviron連携の更新。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r#L382",
+      "referenceSignature": "pairlist(packageName = \"aquap2\", silent = FALSE)"
+    },
+    {
+      "name": "$<-",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "aquap_data等の代入時の検証・属性保持。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L86"
+    },
+    {
+      "name": "-",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "data/matrix等の減算とheader/wavelength整合性。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L107"
+    },
+    {
+      "name": "/",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "dataの除算と構造保持。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L110"
+    },
+    {
+      "name": "[",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "aquap_data等の行subsetとslot/metadata保持。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L38"
+    },
+    {
+      "name": "[<-",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "mergeLabels等の代入検証。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L55"
+    },
+    {
+      "name": "generateMergeLabels",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "merge用のclass/numeric列と値の定義。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L137"
+    },
+    {
+      "name": "getHeader",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "data/setのheader抽出。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L245"
+    },
+    {
+      "name": "getWavelengths",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "ncpwlに従う実波長抽出。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L269"
+    },
+    {
+      "name": "mergeDatasets",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "header/wavelength不一致時のdelete/fill/cut/resample等とmerge情報。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L120"
+    },
+    {
+      "name": "plot",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "data/cube/各modelに応じるS4描画dispatch。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L154"
+    },
+    {
+      "name": "plot_da",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "DA各方式の分類結果・誤差・CV表示。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L195"
+    },
+    {
+      "name": "plot_nnet",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "ニューラル分類の評価・予測表示。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L210"
+    },
+    {
+      "name": "plot_pca",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "scores/loadings/ellipse/寄与率/対表示。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L172"
+    },
+    {
+      "name": "plot_pls",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "PLSR誤差・回帰係数・RDP等の図表。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L181"
+    },
+    {
+      "name": "plot_rnf",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "random forest分類の評価表示。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L200"
+    },
+    {
+      "name": "plot_simca",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "SIMCA予測/距離/表の表示。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L187"
+    },
+    {
+      "name": "plot_spectra",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "raw/群平均/差スペクトルとpeak表示。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L163"
+    },
+    {
+      "name": "plot_svm",
+      "kind": "method-generic",
+      "status": "not-implemented",
+      "notes": "SVM分類の評価表示。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r#L205"
+    }
+  ],
+  "features": [
+    {
+      "id": "data-model",
+      "label": "data/cubeモデル",
+      "implemented": true,
+      "status": "partial",
+      "oracleValidation": {
+        "status": "verified",
+        "scope": "人工24試料×61波長のmatrix/ID/群/実波長の往復と行順。3群の不均等n・予約名global・日本語/引用符/改行labelを含む。R S4 slot/metadata全互換は対象外。",
+        "reportId": "qa/v1.5-aquap2py-verification.json"
+      },
+      "notes": "9 S4 classes・6 class unions・68 method definitionsの全再現ではない。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r"
+    },
+    {
+      "id": "metadata",
+      "label": "metadata/analysis procedure",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "Rファイル・既定値・class/numeric prefix・実験設計・version検証。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_metadata.r"
+    },
+    {
+      "id": "settings",
+      "label": "settingsと環境",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "AQUAP2SH/.Renviron・settings管理・自動更新・標準列名。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r"
+    },
+    {
+      "id": "cube-splitting",
+      "label": "cube分割",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "class×波長範囲×走査平均×noise×outlierの組合せ。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_generateDatasets.r"
+    },
+    {
+      "id": "dpt-pipeline",
+      "label": "順序付き前処理",
+      "implemented": true,
+      "status": "partial",
+      "oracleValidation": {
+        "status": "verified",
+        "scope": "同じ生matrixをPythonと導入済R 0.4.5の公開gdmm dpt.preへ入力。未処理、SNV、MSC、SGおよびSGとSNV/MSCの両順序、不等間隔の無補間を含む12条件。全cube/dpt.pre/postは対象外。",
+        "reportId": "qa/v1.5-aquap2py-verification.json"
+      },
+      "notes": "初版はsgol/snv/mscのみ。dpt.pre/post全分岐やextraModelsは未対応。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_generateDatasets.r"
+    },
+    {
+      "id": "sgolay",
+      "label": "Savitzky–Golay",
+      "implemented": true,
+      "status": "partial",
+      "oracleValidation": {
+        "status": "verified",
+        "scope": "signal 1.8-1を使うR gdmm dpt.preとの全61列・端点を含む比較。p=2、n=21/m=0とn=11/m=0/1/2、ts=1。非等間隔列も列位置演算。全p/n/微分次数・nm間隔指定は対象外。",
+        "reportId": "qa/v1.5-aquap2py-verification.json"
+      },
+      "notes": "signal::sgolay/sgolayfilt、ts=1、端点・derivativeを対象。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "snv",
+      "label": "SNV",
+      "implemented": true,
+      "status": "partial",
+      "oracleValidation": {
+        "status": "verified",
+        "scope": "R公開gdmm dpt.preのSNV（行内標本SD ddof=1）と単独/SG前後で比較。人工24×61、定数スペクトル1条件の双方拒否。欠損回復・全退化条件は対象外。",
+        "reportId": "qa/v1.5-aquap2py-verification.json"
+      },
+      "notes": "行方向meanと標本SD(ddof=1)。Workbench標準のddof=0とは別。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "msc",
+      "label": "MSC",
+      "implemented": true,
+      "status": "partial",
+      "oracleValidation": {
+        "status": "verified",
+        "scope": "R公開gdmm dpt.pre/pls 2.9-0 MSCと全試料平均参照で単独/SG前後を比較。人工24×61。外部参照vector/model・特異回帰条件のR互換は未照合。",
+        "reportId": "qa/v1.5-aquap2py-verification.json"
+      },
+      "notes": "pls::mscの平均/明示参照。外部model/exportModel全契約は未対応。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "emsc",
+      "label": "EMSC",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "gapder",
+      "label": "gap-segment derivative",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "detrend",
+      "label": "detrend",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "resample",
+      "label": "波長resample",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "averaging",
+      "label": "群/連続走査の平均",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "osc",
+      "label": "OSC（上流placeholder）",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "0.4.5も\"Sorry, no osc yet!\"のみ。実OSCの実装済み機能と数えない。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_generateDatasets.r"
+    },
+    {
+      "id": "wavelength-selection",
+      "label": "波長範囲/点/区間の抽出",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "selectWls/siWl/siWlg。siWlg(avg=TRUE)は区間内算術平均。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r"
+    },
+    {
+      "id": "selection-merge-operators",
+      "label": "行抽出/merge/演算",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "criteria式、header/波長不一致policy、S4代入・演算・属性保持。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/mod_modifyDatasets.r"
+    },
+    {
+      "id": "calculated-variables",
+      "label": "計算/結合変数",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "calculateVariable/combineVariableの型・式・prefix・metadata更新。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/mod_modifyDatasets.r"
+    },
+    {
+      "id": "augmentation",
+      "label": "人工dataset拡張",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "do_blowupの群別resampling/平均、由来列・乱数・対話を含む。上流のcst引数は無視される。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
+    },
+    {
+      "id": "noise",
+      "label": "noise校正/付加",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "sdNorm/sdUnif/extrema/static、校正dataset・妥当性検証。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_noise.r"
+    },
+    {
+      "id": "experiment-design",
+      "label": "実験計画とsample list",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "時間点/階層class/反復/連続走査/対照/ランダム化、xls/txt。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_SampleList.r"
+    },
+    {
+      "id": "experiment-generation",
+      "label": "noise/温度校正実験生成",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "genNoiseRecExp/genTempCalibExpの計画と保存構成。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r"
+    },
+    {
+      "id": "raw-io",
+      "label": "装置raw/header読込",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "vision_NSAS.da/tabDelim.txt/Pirouette.pir/xlsx＋custom import、行照合。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData_specific.r"
+    },
+    {
+      "id": "trh-io",
+      "label": "温湿度log照合",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "TRH/custom logger import・時間軸・class化。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/prep_importData.r"
+    },
+    {
+      "id": "persistence",
+      "label": "R-data保存/復元",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "saveAQdata/loadAQdataとdataset version/metadataの往復。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r"
+    },
+    {
+      "id": "pca",
+      "label": "平均中心化PCA",
+      "implemented": true,
+      "status": "partial",
+      "oracleValidation": {
+        "status": "verified",
+        "scope": "12条件で平均中心化・非標準化の先頭5成分scores/loadingsを符号整列し、寄与率を比較。人工24×61・分離した特異値。縮退/近接部分空間、全成分数/scale、R model属性は対象外。",
+        "reportId": "qa/v1.5-aquap2py-verification.json"
+      },
+      "notes": "rw_PCAのscores/loadings/var/totalvar。符号/縮退部分空間を分けて照合。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_makeModels.r"
+    },
+    {
+      "id": "plsr",
+      "label": "PLSR/成分選択/CV",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "pls::plsrとCV/LOO/class分割・反復adjCV成分選択。既存nested PLSとは別。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_plsr.r"
+    },
+    {
+      "id": "plsr-outliers-predict",
+      "label": "PLSR outlier/独立予測",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "PLSR固有除外・modelPlus・独立dataset対応・図表出力。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_plsr.r"
+    },
+    {
+      "id": "simca",
+      "label": "SIMCA",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "classic/robustモデル、群別予測、距離、held-out評価。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_simca.r"
+    },
+    {
+      "id": "classifiers",
+      "label": "7分類器",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "lda/qda/fda/mclustda/rndforest/svm/nnet。学習・CV/holdout/独立予測を含む。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_classif_gen.r"
+    },
+    {
+      "id": "aquagram-classic",
+      "label": "AQ classic",
+      "implemented": true,
+      "status": "partial",
+      "oracleValidation": {
+        "status": "verified",
+        "scope": "人工24×61・12実波長、classic/globalの標本SD ddof=1を換算せず比較。AQ内部は明示SG3/p2/m0・MSCなし、前処理条件はreport参照。温度校正/他AQ既定値/実測データは対象外。",
+        "reportId": "qa/v1.5-aquap2py-verification.json"
+      },
+      "notes": "標本SDの群平均/指定群差、AQ内部のSG/MSC順を対象。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-classic-diff",
+      "label": "AQ classic-diff",
+      "implemented": true,
+      "status": "partial",
+      "oracleValidation": {
+        "status": "verified",
+        "scope": "人工24×61・12実波長、classic-diffの指定対照群（予約名global群を含む）との差を標本SD ddof=1のまま比較。AQ内部SG3・MSCなし。全AQ mode/既定値は対象外。",
+        "reportId": "qa/v1.5-aquap2py-verification.json"
+      },
+      "notes": "標本SDの群平均/指定群差、AQ内部のSG/MSC順を対象。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-sfc",
+      "label": "AQ sfc",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-sfc-diff",
+      "label": "AQ sfc-diff",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-aucs",
+      "label": "AQ aucs",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-aucs-diff",
+      "label": "AQ aucs-diff",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-aucs.tn",
+      "label": "AQ aucs.tn",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-aucs.tn-diff",
+      "label": "AQ aucs.tn-diff",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-aucs.tn.dce",
+      "label": "AQ aucs.tn.dce",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-aucs.tn.dce-diff",
+      "label": "AQ aucs.tn.dce-diff",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-aucs.dce",
+      "label": "AQ aucs.dce",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aquagram-aucs.dce-diff",
+      "label": "AQ aucs.dce-diff",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "温度校正dataset/APIのnative照合なし。"
+      },
+      "notes": "校正中心または温度校正AUC系。native移植・R照合は未実施。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aq-calibration",
+      "label": "温度校正とAUC基盤",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "校正dataset、ot1.12/15座標、polygon面積比、min/max、loess、TCalib/Texp。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aq-balanced-bootstrap",
+      "label": "AQ観測数補正/bootstrap/CI",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "群観測数のrandom balance、non-classic bootstrap、CI/有意差表。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "aq-spectra",
+      "label": "AQ関連spectra",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "raw/avg/subtr spectraと基準・波長・群の保持。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
+    },
+    {
+      "id": "plotting",
+      "label": "全modelの描画/出力",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "PCA/AQ/PLS/SIMCA/7分類器、polar/linear、legend/CI/PDF/XLS。現在UI図はR描画API互換ではない。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/plot_all.r"
+    },
+    {
+      "id": "maintenance",
+      "label": "導入/更新/サンプルhelper",
+      "implemented": false,
+      "status": "not-implemented",
+      "oracleValidation": {
+        "status": "not-applicable",
+        "scope": "未実装・未照合"
+      },
+      "notes": "genFolderStr/instAquap2Examples/updateAquap2のPython側対応方針は未実装。",
+      "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_general.r"
+    }
+  ],
+  "limitations": [
+    "64宣言入口と全behaviorの完全互換ではありません。",
+    "native subsetのR数値照合済みは記録した人工12条件に限定。未照合の引数/metadata/実測データと全API互換を含みません。",
+    "温度校正/AUC・PLSR・SIMCA・分類・装置IO・R任意式/metadata・描画/保存の完全互換は未実装です。",
+    "Workbench標準/nested PLS/R接続oracleの既存結果をnative移植の検証済み結果へ読み替えません。",
+    "0.5.1 masterは別targetで、0.4.5の後継単一直線として扱いません。"
+  ],
+  "verifiedScope": [
+    "人工24試料×61波長・不均等3群、同一の生matrixをPythonと導入済aquap2 0.4.5公開gdmmへ入力した12条件/60数値check。",
+    "SG p2 n21 m0・n11 m0/1/2の端点/ts1、SNV標本SD、MSC全試料平均参照、SGとの両順序、不等間隔無補間。",
+    "平均中心化・非標準化PCAの先頭5成分（符号整列）と寄与率。AQ classic/classic-diffはSG3/内部MSCなし・12実波長・標本SDの換算なし。",
+    "ID/群/波長の行順と予約語・日本語/引用符/改行labels。定数SNV/同一スペクトルの2退化ケースは双方拒否を確認。",
+    "atol=1e-8/rtol=1e-7。最大絶対差: 前処理1.0436e-14、PCA score1.2088e-14/loadings1.0957e-13/寄与率7.7716e-16、AQ2.7089e-13。",
+    "本記録は開発時oracle。通常のPython実行・ブラウザー入力をその都度Rへ送って照合したものではありません。"
+  ],
+  "inventoryCounts": {
+    "exportFunctions": 46,
+    "exportedMethodGenerics": 18,
+    "declaredApiEntries": 64,
+    "runtimeVisibleNames": 59,
+    "runtimeDispatchTables": 20,
+    "sourceTopLevelFunctions": 490,
+    "sourceMethodDefinitions": 68,
+    "s4ClassesAndUnions": 15
+  },
+  "license": {
+    "implementation": "GPL-2.0-or-later",
+    "referenceDeclared": "GPL (>=2)",
+    "master051Declared": "GPL (>=3)",
+    "notice": "NOTICE.md",
+    "licenseFile": "LICENSE",
+    "notALegalCompatibilityOpinion": true
+  },
+  "oracleEvidence": {
+    "reportId": "qa/v1.5-aquap2py-verification.json",
+    "reportSha256": "c279ec75902e1c26b99059c43081ed02e68e11a105a74b5c068b1761a2f97bca",
+    "sourceHarnessUsed": false,
+    "installedRPackage": true,
+    "runs": 12,
+    "numericChecks": 60,
+    "degenerateRejections": 2,
+    "artificial": true,
+    "currentRunComparedWithR": false,
+    "maximumAbsoluteDifferences": {
+      "nativePreprocessing": 1.0436096431476471e-14,
+      "pcaScoresSignAligned": 1.2087553180606392e-14,
+      "pcaLoadingsSignAligned": 1.0956686946617111e-13,
+      "pcaExplainedVariance": 7.771561172376096e-16,
+      "aquagramSameSampleSdNoConversion": 2.708944180085382e-13
+    }
+  }
+}

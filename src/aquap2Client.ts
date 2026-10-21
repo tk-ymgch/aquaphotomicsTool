@@ -49,11 +49,11 @@ export function validateROutput(output: unknown, result: AnalysisResult): ROutpu
 export function mergeAquap2Result(result: AnalysisResult, output: ROutput): AnalysisResult {
   const checked = validateROutput(output, result);
   const converted = structuredClone(result);
-  const execution: ExecutionRecord = {engine:'aquap2',preprocessingEngine:'python',pcaEngine:'aquap2',aquagramEngine:'aquap2',packageApiExecuted:true,aquap2Version:checked.runtime.aquap2Version,rVersion:checked.runtime.rVersion,api:'aquap2::gdmm',aquagramMode:result.metadata.settings.aquagramReference === 'global' ? 'classic' : 'classic-diff'};
+  const execution: ExecutionRecord = {engine:'aquap2',preprocessingEngine:'python',pcaEngine:'aquap2',aquagramEngine:'aquap2',packageApiExecuted:true,aquagramSdDdof:1,implementationName:'aquap2',implementationVersion:checked.runtime.aquap2Version,aquap2Version:checked.runtime.aquap2Version,rVersion:checked.runtime.rVersion,api:'aquap2::gdmm',aquagramMode:result.metadata.settings.aquagramReference === 'global' ? 'classic' : 'classic-diff'};
   converted.metadata.settings.analysisEngine = 'aquap2';
   converted.metadata.execution = execution;
   converted.pca = structuredClone(checked.pca);
-  converted.aquagram = {...structuredClone(checked.aquagram),labels:result.aquagram.labels};
+  converted.aquagram = {...structuredClone(checked.aquagram),labels:result.aquagram.labels,sdDdof:1};
   // No endpoint or connection token is included in saved results.
   const runtime = {...checked.runtime, stageExecution:execution};
   converted.exports['aquap2_runtime.json'] = JSON.stringify(runtime, null, 2);

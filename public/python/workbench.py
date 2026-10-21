@@ -668,6 +668,12 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
     when SG is requested on uneven wavelengths -> SG smoothing/derivative.
     PCA always centers variables; optional scaling uses population SD (ddof=0).
     """
+    if isinstance(config, dict):
+        engine = config.get("analysisEngine", "python")
+        if engine == "aquap2py":
+            return _analyze_aquap2py(df, config)
+        if engine not in {"python", "aquap2"}:
+            raise ValueError("対応しない解析エンジンです。")
     # Loaded on demand: inspecting a file requires only NumPy and pandas in
     # Pyodide; the worker loads SciPy and scikit-learn before analysis.
     import scipy
@@ -978,4 +984,153 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
                 "data/pls_cv_curve.csvは最終モデルの成分数選択用の内側CV曲線です。\n"
                 "pls_model.jsonには各CV区画の学習行、前処理統計、最終モデルと係数の定義を記録しています。\n"
             )
+    return result
+
+
+def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
+    """Adapt the existing table IO to the independent, R-free numerical port.
+
+    Workbench's no-op path selects and validates the original measured matrix.
+    Its preliminary PCA/Aquagram are discarded; the port computes every saved
+    processed value, PCA and Aquagram. No R package/API is executed here.
+    """
+    import copy
+    import importlib.resources
+    import sys
+    from pathlib import Path
+
+    # Also support loading workbench.py by an explicit filesystem spec.
+    sibling = Path(__file__).resolve().parent
+    if (sibling / "aquap2py").is_dir() and str(sibling) not in sys.path:
+        sys.path.insert(0, str(sibling))
+    import aquap2py as port
+
+    if config.get("missing", "error") != "error":
+        raise ValueError("aquap2pyの初版は欠損補完に未対応です。欠損があれば停止を選択してください。")
+    if config.get("pcaScale", False) is not False:
+        raise ValueError("aquap2pyのPCAは平均中心化のみです。波長ごとの標準化を解除してください。")
+    pls = config.get("pls")
+    if pls is not None and (not isinstance(pls, dict) or not isinstance(pls.get("enabled"), bool)):
+        raise ValueError("PLSの有効・無効設定を確認してください。")
+    if pls and pls["enabled"]:
+        raise ValueError("aquap2pyのPLSR移植は未対応です。Workbench標準PythonのPLSとは別の実装対象です。")
+    requested_components = _integer(config.get("components", 3), "PCA成分数", 1)
+    if requested_components > 10:
+        raise ValueError("aquap2pyのPCAは10成分までです。")
+    targets = config.get("aquagramWavelengths")
+    if not isinstance(targets, list) or not 3 <= len(targets) <= 24:
+        raise ValueError("aquap2pyのAquagramは3〜24波長を指定してください。")
+    if not isinstance(config.get("aquagramReference", "global"), str):
+        raise ValueError("Aquagramの基準を選択してください。")
+    if config.get("aquagramReference") in {"none", "None"}:
+        raise ValueError("aquap2pyの初版はclassic/classic-diffのみです。基準なしは未対応です。")
+    smooth = config.get("smooth", False)
+    if not isinstance(smooth, bool):
+        raise ValueError("平滑化の設定を確認してください。")
+    derivative = _integer(config.get("derivative", 0), "微分次数", 0)
+    if derivative not in {0, 1, 2}:
+        raise ValueError("微分次数は0、1、2から選択してください。")
+    window = _integer(config.get("window", 11), "SG窓幅", 3)
+    polyorder = _integer(config.get("polyorder", 2), "SG多項式次数", 0)
+    scatter = config.get("scatter", "none")
+    if not isinstance(scatter, str) or scatter not in {"none", "snv", "msc"}:
+        raise ValueError("aquap2pyで対応する散乱補正を選択してください。")
+    mode = _pipeline_mode(config.get("pipelineMode", "modern"))
+    neutral = {**config, "analysisEngine": "python", "scatter": "none",
+               "smooth": False, "derivative": 0, "pcaScale": False}
+    result = analyze(df, neutral)
+    spectrum = result["spectra"]
+    before = json.loads(result["exports"]["settings.json"])["_provenance"]
+    applied = {**result["metadata"]["settings"], "analysisEngine": "aquap2py",
+               "scatter": scatter, "smooth": smooth, "derivative": derivative,
+               "window": window, "polyorder": polyorder}
+    if applied["aquagramReference"] != "global" and not applied["aquagramReference"].startswith("group:"):
+        applied["aquagramReference"] = "group:" + applied["aquagramReference"]
+    if pls is not None:
+        applied["pls"] = {key: value for key, value in pls.items() if key in {
+            "enabled", "targetColumn", "maxComponents", "folds", "split", "cvGroupColumn", "seed", "scale"}}
+    scatter_steps = [{"method": scatter}] if scatter != "none" else []
+    sg_steps = ([{"method": "sgolay", "window": window, "polyorder": polyorder,
+                  "derivative": derivative, "delta": 1}] if smooth or derivative else [])
+    steps = sg_steps + scatter_steps if mode == "legacy-python" else scatter_steps + sg_steps
+    dataset = port.ttap(spectrum["raw"], spectrum["wavelengths"], spectrum["ids"], spectrum["groups"])
+    cube = port.gdmm(dataset, steps=steps, components=applied["components"],
+                     aquagram_wavelengths=result["aquagram"]["wavelengths"],
+                     reference=applied["aquagramReference"], aq_smooth_n=3)
+    processed = np.asarray(cube["preprocessed"], dtype=float)
+    pc = cube["pca"]
+    scores, loadings = np.asarray(pc["scores"]), np.asarray(pc["loadings"])
+    variance = np.asarray(pc["explainedVariance"])
+    result["pca"] = {"scores": scores.tolist(), "loadings": loadings.tolist(),
+        "explainedVariance": variance.tolist(), "ids": spectrum["ids"], "groups": spectrum["groups"]}
+    result["aquagram"] = copy.deepcopy(cube["aquagram"])
+    for group in result["aquagram"]["groups"]:
+        group["values"] = np.asarray(group["values"]).tolist()
+    result["aquagram"]["wavelengths"] = np.asarray(result["aquagram"]["wavelengths"]).tolist()
+    result["aquagram"]["sdDdof"] = 1
+    applied["aquagramWavelengths"] = result["aquagram"]["wavelengths"]
+    spectrum["processed"] = processed.tolist()
+    report = json.loads(importlib.resources.files("aquap2py").joinpath("coverage.json").read_text(encoding="utf-8"))
+    report["currentRunComparedWithR"] = False
+    if report.get("completeCompatibility") is not False:
+        raise ValueError("aquap2pyの互換性記録を確認できません。")
+    execution = {"engine": "aquap2py", "preprocessingEngine": "aquap2py", "pcaEngine": "aquap2py",
+        "aquagramEngine": "aquap2py", "packageApiExecuted": False,
+        "implementationName": "aquap2py", "implementationVersion": port.__version__,
+        "referenceAquap2Version": report["reference"]["version"], "aquagramSdDdof": 1,
+        "aquagramMode": result["aquagram"].get("mode", "classic")}
+    warnings = [warning for warning in result["metadata"]["warnings"] if "最近傍" in warning or "成分数を" in warning or "人工" in warning]
+    warnings += ["aquap2pyは非公式の部分移植です。対応一覧に記録した条件でR本体と検証し、今回の入力をRへ送って照合したものではありません。",
+        "SNVは標本SD（ddof=1）、SG微分の間隔は列位置1です。波長nmあたりへ換算せず、不等間隔も補間しません。",
+        "Aquagram内部は恒等SG3・MSCなしの明示条件です。aquap2既定のSG21・内部MSCありとは区別してください。"]
+    if not np.allclose(np.diff(spectrum["wavelengths"]), np.diff(spectrum["wavelengths"])[0]):
+        warnings.append("不等間隔の波長です。aquap2pyのSGは列位置に対する演算として適用します。")
+    result["metadata"].update(settings=applied, execution=execution, warnings=warnings, compatibilityReport=report)
+    pc_names = [f"PC{i+1}" for i in range(scores.shape[1])]
+    processed_df = pd.DataFrame(processed, columns=[f"wl_{w:.12g}" for w in spectrum["wavelengths"]])
+    scores_df = pd.DataFrame(scores, columns=pc_names)
+    for table in (processed_df, scores_df):
+        table.insert(0, "group", spectrum["groups"])
+        table.insert(0, "sample_id", spectrum["ids"])
+    loadings_df = pd.DataFrame(loadings, columns=pc_names)
+    loadings_df.insert(0, "wavelength_nm", spectrum["wavelengths"])
+    aq_rows = [{"group": group["name"], "wavelength_nm": wave, "value": float(value), "n": group["n"]}
+        for group in result["aquagram"]["groups"] for wave, value in zip(result["aquagram"]["wavelengths"], group["values"])]
+    runtime = {**execution, "referenceCommit": report["reference"]["commit"], "steps": steps,
+               "currentRunComparedWithR": False, "completeCompatibility": False,
+               "nativePipeline": cube.get("provenance", {}), "rRequired": False}
+    # Requested settings retain only declared fields; transport credentials are never retained.
+    requested = {key: copy.deepcopy(value) for key, value in config.items() if key in set(applied)}
+    if "pls" in requested:
+        requested["pls"] = copy.deepcopy(applied["pls"])
+    provenance = {**before, "engineVersion": "aquap2py-"+port.__version__, "execution": execution,
+        "requestedConfig": requested, "implementation": "aquap2py unofficial Python numerical port; no R execution",
+        "aquap2_not_executed": True, "order": [step["method"] for step in steps]+["pca", "aquagram"],
+        "pipeline": [step["method"] for step in steps], "sgApplied": bool(sg_steps),
+        "sgMode": "R signal-compatible sample-position filter" if sg_steps else None,
+        "sgDelta": 1 if sg_steps else None, "snvDdof": 1 if scatter == "snv" else None,
+        "interpolated": False, "irregularWavelengthPolicy": "column-position-without-interpolation",
+        "legacyCompatibilityScope": "処理モードは移植版の適用順のみを選択する。Workbench旧Pythonの数値互換を意味しない。",
+        "mscReference": ("SG処理後の全試料平均スペクトル" if mode == "legacy-python" else "元の全試料平均スペクトル") if scatter == "msc" else None,
+        "numericalBackend": "NumPy SVD / SciPy FIR / independently implemented aquap2py",
+        "pcaMean": processed.mean(axis=0).tolist(), "pcaProcessedMean": processed.mean(axis=0).tolist(),
+        "aquagramDefinition": result["aquagram"]["definition"], "warnings": warnings,
+        "compatibilityReport": report, "aquap2pyRuntime": runtime}
+    result["exports"].update({
+        "data/preprocessed.csv": _csv(processed_df), "data/pca_scores.csv": _csv(scores_df),
+        "data/pca_loadings.csv": _csv(loadings_df),
+        "data/pca_variance.csv": _csv(pd.DataFrame({"component": pc_names, "explained_variance_ratio": variance, "cumulative_ratio": np.cumsum(variance)})),
+        "data/aquagram.csv": _csv(pd.DataFrame(aq_rows)),
+        "settings.json": json.dumps({**applied, "_provenance": provenance}, ensure_ascii=False, indent=2, allow_nan=False),
+        "aquap2py_runtime.json": json.dumps(runtime, ensure_ascii=False, indent=2, allow_nan=False),
+        "compatibility-report.json": json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False),
+        "README.txt": "aquap2py "+port.__version__+" / 非公式・部分移植\n前処理・PCA・AquagramをPythonで実行。R本体APIは実行していません。\n"
+            + (ARTIFICIAL+"の解析です。実験結果ではありません。\n" if before.get("source", {}).get("artificial") else "")
+            + "Aquagramはsample SD(ddof=1)。SGは列位置間隔1、不等間隔補間なし。AQ内部SG3・MSCなしの条件です。\n"
+            + "完全対応ではありません。compatibility-report.jsonの実装/検証/未対応を確認してください。\n"
+            + "既存WorkbenchのPLSはaquap2のPLSR移植とは別です。温度校正/AUC/分類/装置別IOはこの移植版で未対応です。\n"
+            + "data/input.csvは元の表、preprocessed.csvは移植版の適用値です。原著者・参照版・ライセンスは同梱のaquap2py/を参照。\n",
+        "aquap2py/NOTICE.md": importlib.resources.files("aquap2py").joinpath("NOTICE.md").read_text(encoding="utf-8"),
+        "aquap2py/LICENSE": importlib.resources.files("aquap2py").joinpath("LICENSE").read_text(encoding="utf-8"),
+    })
     return result
