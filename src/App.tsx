@@ -1,0 +1,226 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Activity, ArrowDownToLine, ArrowRight, ArrowUpRight, Check, ChevronRight, CircleHelp, Database, FileSpreadsheet, FlaskConical, Menu, MousePointer2, Play, Plus, Radar, RefreshCw, ScatterChart, Settings2, ShieldCheck, SlidersHorizontal, Upload, Waves, X } from 'lucide-react';
+import { strToU8, zipSync } from 'fflate';
+import { AnalysisClient } from './client';
+import type { AnalysisConfig, AnalysisResult, DatasetSummary, Progress } from './types';
+import Plot, { figurePng } from './Plot';
+import type { Figure } from './Plot';
+import './styles.css';
+
+type View = 'setup' | 'spectra' | 'pca' | 'aquagram';
+type Source = { kind: 'file'; file: File; sheet?: string } | { kind: 'demo' };
+const palette = ['#161616', '#747474', '#a5a5a5', '#424242', '#c1c1c1', '#878787'];
+const dashes = ['solid', 'dash', 'dot', 'dashdot', 'longdash', 'longdashdot'];
+const symbols = ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'triangle-down'];
+const viewNames: Record<View, string> = { setup: 'データと解析設定', spectra: 'スペクトル', pca: '主成分分析', aquagram: 'Aquagram' };
+const fmt = (value: unknown) => typeof value === 'number' ? Number.isFinite(value) ? value.toLocaleString('ja-JP', { maximumFractionDigits: 5 }) : '—' : value === null || value === undefined || value === '' ? '—' : String(value);
+const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+
+function defaults(summary: DatasetSummary): AnalysisConfig {
+  const waves = [...summary.wavelengthColumns].sort((a, b) => a.wavelength - b.wavelength);
+  const min = waves[0]?.wavelength ?? 1300, max = waves.at(-1)?.wavelength ?? 1600;
+  const preset = [1342, 1364, 1374, 1384, 1412, 1426, 1440, 1452, 1462, 1478, 1488, 1512];
+  const aq = min <= 1342 && max >= 1512 ? preset : Array.from(new Set(Array.from({ length: Math.min(12, waves.length) }, (_, i) => waves[Math.round(i * (waves.length - 1) / Math.max(1, Math.min(12, waves.length) - 1))]?.wavelength).filter(Number.isFinite)));
+  const gaps = waves.slice(1).map((wave, i) => wave.wavelength - waves[i].wavelength).filter(x => x > 0).sort((a, b) => a - b);
+  return { idColumn: summary.suggestedId, groupColumn: summary.suggestedGroup, wavelengthColumns: waves.map(x => x.column), range: [min, max], missing: 'error', scatter: 'snv', smooth: true, window: Math.max(3, Math.min(11, waves.length % 2 ? waves.length : waves.length - 1)), polyorder: 2, derivative: 0, pcaScale: false, components: Math.min(5, Math.max(1, summary.rowCount - 1), Math.max(1, waves.length)), aquagramWavelengths: aq, aquagramReference: 'global', aquagramTolerance: Math.max(1, (gaps[Math.floor(gaps.length / 2)] ?? 2) * .6) };
+}
+function parseWaves(text: string) {
+  const tokens = text.trim().split(/[,、;\s]+/).filter(Boolean);
+  const waves = tokens.map(Number);
+  return { waves, valid: tokens.length >= 3 && waves.every(x => Number.isFinite(x) && x > 0) && new Set(waves).size === waves.length };
+}
+function layout(title: string, x = '', y = ''): Record<string, any> {
+  return { title: { text: title, x: .035, xanchor: 'left', y: .985, yanchor: 'top', font: { size: 14, color: '#666' } }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(255,255,255,0)', font: { family: 'Arial, "Noto Sans JP", sans-serif', color: '#464646', size: 11 }, margin: { l: 72, r: 32, t: 100, b: 66 }, xaxis: { title: { text: x, standoff: 20 }, gridcolor: '#ebedef', zerolinecolor: '#d2d5d8', showline: true, linecolor: '#d5d8da', ticks: 'outside', tickcolor: '#d5d8da' }, yaxis: { title: { text: y, standoff: 18 }, gridcolor: '#ebedef', zerolinecolor: '#d2d5d8', showline: false }, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: { size: 11 }, bgcolor: 'rgba(255,255,255,0)' }, hovermode: 'closest', hoverlabel: { bgcolor: '#fff', bordercolor: '#d5d5d5', font: { color: '#171717', size: 12 } }, uirevision: title };
+}
+function spectralFigure(result: AnalysisResult, mode: 'raw' | 'processed', selected: string | null): Figure {
+  const spectra = result.spectra, groups = [...new Set(spectra.groups)], matrix = spectra[mode];
+  // The display cap does not affect calculations or exported CSVs.
+  const shown = new Set(Array.from({ length: Math.min(200, spectra.ids.length) }, (_, i) => Math.floor(i * spectra.ids.length / Math.min(200, spectra.ids.length))));
+  if (selected) spectra.ids.forEach((id, i) => { if (id === selected) shown.add(i); });
+  const data = groups.map((group, gi) => {
+    const x: (number | null)[] = [], y: (number | null)[] = [], ids: (string | null)[] = [];
+    spectra.ids.forEach((id, i) => { if (spectra.groups[i] !== group || !shown.has(i)) return; for (let j = 0; j < spectra.wavelengths.length; j++) { x.push(spectra.wavelengths[j]); y.push(matrix[i][j]); ids.push(id); } x.push(null); y.push(null); ids.push(null); });
+    return { type: 'scatter', mode: 'lines', name: group, x, y, customdata: ids, line: { color: palette[gi % palette.length], width: 1.15, dash: dashes[gi % dashes.length] }, opacity: selected ? .22 : .75, connectgaps: false, hovertemplate: '%{customdata}<br>波長 %{x:.1f} nm<br>信号 %{y:.5g}<extra>' + group + '</extra>' };
+  });
+  if (selected) spectra.ids.forEach((id, i) => { if (id === selected) data.push({ type: 'scatter', mode: 'lines', name: id, x: spectra.wavelengths, y: matrix[i], customdata: spectra.wavelengths.map(() => id), line: { color: '#050505', width: 2.7, dash: 'solid' }, opacity: 1, connectgaps: false, hovertemplate: '%{customdata}<br>波長 %{x:.1f} nm<br>信号 %{y:.5g}<extra>選択した試料</extra>' }); });
+  const y = mode === 'raw' ? '元の信号値' : result.metadata.settings.derivative ? `${result.metadata.settings.derivative} 次微分信号` : result.metadata.settings.scatter === 'none' ? '前処理後の信号値' : '前処理後の相対信号';
+  return { data, layout: layout(mode === 'raw' ? 'RAW SPECTRA' : 'PREPROCESSED SPECTRA', '波長 / nm', y) };
+}
+function scoreFigure(result: AnalysisResult, x: number, y: number, selected: string | null): Figure {
+  const pca = result.pca, hasY = (pca.scores[0]?.length ?? 0) > 1, groups = [...new Set(pca.groups)];
+  return { data: groups.map((group, gi) => { const indices = pca.ids.map((_, i) => i).filter(i => pca.groups[i] === group); return { type: 'scatter', mode: 'markers', name: group, x: indices.map(i => pca.scores[i][x]), y: indices.map(i => hasY ? pca.scores[i][y] : i + 1), customdata: indices.map(i => pca.ids[i]), text: indices.map(i => pca.ids[i]), marker: { color: palette[gi % palette.length], size: indices.map(i => pca.ids[i] === selected ? 14 : 9), symbol: symbols[gi % symbols.length], line: { color: '#fff', width: 1.5 }, opacity: indices.map(i => selected && pca.ids[i] !== selected ? .2 : .85) }, hovertemplate: '%{customdata}<br>x: %{x:.4g}<br>y: %{y:.4g}<extra>' + group + '</extra>' }; }), layout: { ...layout('PCA SCORE PLOT', `PC${x + 1} · ${pct(pca.explainedVariance[x] ?? 0)}`, hasY ? `PC${y + 1} · ${pct(pca.explainedVariance[y] ?? 0)}` : '試料番号（第2成分なし）'), xaxis: { ...layout('').xaxis, title: `PC${x + 1} · ${pct(pca.explainedVariance[x] ?? 0)}`, zeroline: true }, yaxis: { ...layout('').yaxis, title: hasY ? `PC${y + 1} · ${pct(pca.explainedVariance[y] ?? 0)}` : '試料番号（第2成分なし）', zeroline: true } } };
+}
+function loadingFigure(result: AnalysisResult): Figure {
+  const n = Math.min(3, result.pca.explainedVariance.length);
+  return { data: Array.from({ length: n }, (_, c) => ({ type: 'scatter', mode: 'lines', name: `PC${c + 1}`, x: result.spectra.wavelengths, y: result.pca.loadings.map(row => row[c]), line: { color: palette[c], width: 2, dash: dashes[c] }, hovertemplate: '%{x:.1f} nm<br>%{y:.5g}<extra>PC' + (c + 1) + '</extra>' })), layout: layout('PCA LOADINGS', '波長 / nm', 'Loading') };
+}
+function varianceFigure(result: AnalysisResult): Figure {
+  const values = result.pca.explainedVariance, x = values.map((_, i) => `PC${i + 1}`);
+  let sum = 0;
+  return { data: [{ type: 'bar', name: '各成分', x, y: values.map(v => v * 100), marker: { color: '#43484b', line: { width: 0 } }, hovertemplate: '%{x}<br>寄与率 %{y:.2f}%<extra></extra>' }, { type: 'scatter', mode: 'lines+markers', name: '累積', x, y: values.map(v => (sum += v * 100)), line: { color: '#a5a9ab', width: 2 }, marker: { color: '#151515', size: 6 }, hovertemplate: '%{x}<br>累積寄与率 %{y:.2f}%<extra></extra>' }], layout: { ...layout('EXPLAINED VARIANCE', '主成分', '寄与率 / %'), yaxis: { ...layout('').yaxis, title: '寄与率 / %', range: [0, 105] }, bargap: .58 } };
+}
+function aquagramFigure(result: AnalysisResult): Figure {
+  const aq = result.aquagram, maximum = aq.groups.reduce((max, g) => g.values.reduce((current, value) => Math.max(current, Math.abs(value)), max), 0), limit = Math.max(1, Math.ceil(maximum * 1.15 * 2) / 2);
+  return { data: [{ type: 'scatterpolar', r: [...aq.labels, aq.labels[0]].map(() => 0), theta: [...aq.labels, aq.labels[0]], mode: 'lines', name: '基準 0', hoverinfo: 'skip', line: { color: '#babfc1', width: 1, dash: 'dot' }, showlegend: false }, ...aq.groups.map((g, i) => ({ type: 'scatterpolar', mode: 'lines+markers', name: `${g.name} (n=${g.n})`, r: [...g.values, g.values[0]], theta: [...aq.labels, aq.labels[0]], line: { color: palette[i % palette.length], width: 2, dash: dashes[i % dashes.length] }, marker: { size: 5, symbol: symbols[i % symbols.length] }, fill: 'toself', fillcolor: `rgba(40,45,48,${i === 0 ? .04 : .015})`, hovertemplate: '%{theta}<br>標準化差 %{r:.3f}<extra>' + g.name + '</extra>' }))], layout: { ...layout('AQUAGRAM'), margin: { l: 80, r: 80, t: 70, b: 55 }, legend: { orientation: 'h', x: 0, y: -.05 }, polar: { bgcolor: 'rgba(255,255,255,0)', radialaxis: { range: [-limit, limit], tickfont: { size: 10, color: '#999' }, gridcolor: '#e1e5e7', linecolor: '#d5d9db', ticks: '' }, angularaxis: { direction: 'clockwise', rotation: 90, gridcolor: '#e1e5e7', linecolor: '#d5d9db', tickfont: { size: 11, color: '#555' } } } } };
+}
+function Field({ label, hint, children, wide = false }: { label: string; hint?: string; children: ReactNode; wide?: boolean }) { return <label className={`field ${wide ? 'field-wide' : ''}`}><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>; }
+function SectionTitle({ index, title, caption }: { index: string; title: string; caption: string }) { return <div className="section-title"><span className="step-index">{index}</span><div><h2>{title}</h2><p>{caption}</p></div></div>; }
+
+export default function App() {
+  const [view, setView] = useState<View>('setup');
+  const [menu, setMenu] = useState(false);
+  const [summary, setSummary] = useState<DatasetSummary | null>(null);
+  const [config, setConfig] = useState<AnalysisConfig | null>(null);
+  const [waterText, setWaterText] = useState('');
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [lastRunKey, setLastRunKey] = useState('');
+  const [resultName, setResultName] = useState('');
+  const [demo, setDemo] = useState(false);
+  const [busy, setBusy] = useState<'load' | 'analyze' | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [spectrumMode, setSpectrumMode] = useState<'raw' | 'processed'>('processed');
+  const [pcaMode, setPcaMode] = useState<'scores' | 'loadings' | 'variance'>('scores');
+  const [axisX, setAxisX] = useState(0), [axisY, setAxisY] = useState(1);
+  const [exporting, setExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState('');
+  const [help, setHelp] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const client = useRef<AnalysisClient | null>(null);
+  const source = useRef<Source | null>(null);
+  const datasetReady = useRef(false);
+  const operation = useRef(0);
+  const parsedWater = parseWaves(waterText);
+  const stale = !!result && (!!config && JSON.stringify(config) !== lastRunKey || !parsedWater.valid);
+  const disabled = !!busy || exporting;
+  const groups = useMemo(() => {
+    if (result && config?.groupColumn === result.metadata.settings.groupColumn) return result.metadata.groups;
+    if (!summary || !config?.groupColumn) return [];
+    const col = summary.columns.indexOf(config.groupColumn);
+    return [...new Set(summary.preview.map(row => String(row[col] ?? '')).filter(Boolean))];
+  }, [summary, config?.groupColumn, result]);
+  useEffect(() => () => { client.current?.dispose(); }, []);
+  const getClient = () => client.current ??= new AnalysisClient(setProgress);
+  function update<K extends keyof AnalysisConfig>(key: K, value: AnalysisConfig[K]) { setConfig(old => old ? { ...old, [key]: value, ...(key === 'groupColumn' ? { aquagramReference: 'global' } : {}) } : null); setNotice(''); }
+  function navigate(next: View) { setView(next); setMenu(false); window.scrollTo({ top: 0, behavior: 'auto' }); }
+  async function load(next: Source) {
+    if (disabled) return;
+    const id = ++operation.current;
+    setBusy('load'); setError(''); setNotice(''); setProgress({ phase: 'load', message: next.kind === 'demo' ? '人工サンプルデータを準備しています' : 'データを読み込んでいます' });
+    try {
+      const data = next.kind === 'demo' ? await getClient().demo() : await getClient().load(next.file, next.sheet);
+      if (id !== operation.current) return;
+      source.current = next.kind === 'file' ? { ...next, sheet: data.sheet ?? undefined } : next;
+      datasetReady.current = true;
+      const initial = defaults(data);
+      setSummary(data); setConfig(initial); setWaterText(initial.aquagramWavelengths.join(', ')); setDemo(data.artificial); setResult(null); setLastRunKey(''); setSelected(null); setAxisX(0); setAxisY(1); navigate('setup');
+      if (!data.wavelengthColumns.length) setError('波長列を検出できませんでした。列名を 1300、1300nm など波長を示す形式にしてください。');
+    } catch (cause) { if (id === operation.current) { client.current?.dispose(); client.current = null; datasetReady.current = false; setError(cause instanceof Error ? cause.message : String(cause)); } }
+    finally { if (id === operation.current) { setBusy(null); setProgress(null); } }
+  }
+  function chooseFile(file?: File) { if (file) { if (!/\.(csv|xlsx|xls)$/i.test(file.name)) { setError('CSV、Excel（.xlsx / .xls）ファイルを選んでください。'); return; } void load({ kind: 'file', file }); } if (fileInput.current) fileInput.current.value = ''; }
+  function cancel() {
+    operation.current += 1; client.current?.dispose(); client.current = null; datasetReady.current = false; setBusy(null); setProgress(null); setNotice('処理を中止しました。再実行時にデータを読み直します。');
+  }
+  async function analyze() {
+    if (!config || !summary || disabled) return;
+    if (!parsedWater.valid) { setError('Aquagramの波長は、重複のない正の数値を3個以上、カンマで区切って指定してください。'); navigate('setup'); return; }
+    if (config.wavelengthColumns.length < 3) { setError('解析する波長列を3列以上選んでください。'); navigate('setup'); return; }
+    const applied = structuredClone({ ...config, aquagramWavelengths: parsedWater.waves });
+    const id = ++operation.current;
+    setBusy('analyze'); setError(''); setNotice(''); setProgress({ phase: 'analyze', message: '解析を開始しています' });
+    try {
+      if (!datasetReady.current && source.current) { const src = source.current; if (src.kind === 'demo') await getClient().demo(); else await getClient().load(src.file, src.sheet); datasetReady.current = true; }
+      const analysis = await getClient().analyze(applied);
+      if (id !== operation.current) return;
+      setResult(analysis); setLastRunKey(JSON.stringify(applied)); setResultName(summary.name); setSelected(null); setAxisX(0); setAxisY(Math.min(1, analysis.pca.explainedVariance.length - 1)); navigate('spectra');
+    } catch (cause) { if (id === operation.current) { client.current?.dispose(); client.current = null; datasetReady.current = false; setError(cause instanceof Error ? cause.message : String(cause)); } }
+    finally { if (id === operation.current) { setBusy(null); setProgress(null); } }
+  }
+  const figures = useMemo(() => result ? { raw: spectralFigure(result, 'raw', selected), processed: spectralFigure(result, 'processed', selected), scores: scoreFigure(result, Math.min(axisX, result.pca.explainedVariance.length - 1), Math.min(axisY, result.pca.explainedVariance.length - 1), selected), loadings: loadingFigure(result), variance: varianceFigure(result), aquagram: aquagramFigure(result) } : null, [result, selected, axisX, axisY]);
+  async function saveZip() {
+    if (!result || !figures || disabled) return;
+    setExporting(true); setError(''); setExportStatus('解析データをまとめています');
+    const saved = result, savedFigures = figures, src = source.current;
+    try {
+      const files: Record<string, Uint8Array> = {};
+      for (const [name, contents] of Object.entries(saved.exports)) {
+        const safe = name.replace(/\\/g, '/').split('/').filter(part => part && part !== '.' && part !== '..').join('/');
+        files[safe.endsWith('.csv') && !safe.includes('/') ? `data/${safe}` : safe] = strToU8(safe.endsWith('.csv') ? '\uFEFF' + contents.replace(/^\uFEFF/, '') : contents);
+      }
+      if (!files['settings.json']) files['settings.json'] = strToU8(JSON.stringify(saved.metadata.settings, null, 2));
+      files['metadata.json'] = strToU8(JSON.stringify({ source: resultName, artificial: demo, ...saved.metadata }, null, 2));
+      if (src?.kind === 'file') files[`source/${src.file.name.replace(/[\\/:*?"<>|]/g, '_')}`] = new Uint8Array(await src.file.arrayBuffer());
+      const entries = Object.entries(savedFigures);
+      for (let i = 0; i < entries.length; i++) {
+        const [name, figure] = entries[i]; setExportStatus(`グラフを保存しています ${i + 1} / ${entries.length}`);
+        const url = await figurePng(figure), binary = atob(url.split(',')[1]);
+        files[`figures/${name}.png`] = Uint8Array.from(binary, c => c.charCodeAt(0));
+      }
+      const extra = `\n\nAquaphotomics Workbench\n元データ: ${resultName}\n${demo ? 'このデータは動作確認用の人工サンプルです。実測データではありません。\n' : ''}設定ファイルは表示結果に実際に適用された設定です。\n${stale ? '画面の未適用設定は含めていません。保存された結果は直前に完了した解析です。\n' : ''}Aquagramは${saved.aquagram.definition}\n図の選択試料: ${selected ?? 'なし'}\n図のPCA軸: PC${axisX + 1}, ${saved.pca.explainedVariance.length > 1 ? `PC${axisY + 1}` : '試料番号'}\n`;
+      files['README.txt'] = strToU8((saved.exports['README.txt'] ?? '') + extra);
+      setExportStatus('ZIPファイルを作成しています');
+      const bytes = zipSync(files, { level: 6 });
+      const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/zip' }));
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = `aquaphotomics_${resultName.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}_-]/gu, '_')}_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.zip`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      setNotice('解析データ・適用設定・グラフをZIPにまとめました。');
+    } catch (cause) { setError(`ZIPを作成できませんでした。${cause instanceof Error ? cause.message : String(cause)}`); }
+    finally { setExporting(false); setExportStatus(''); }
+  }
+  const selectedIndex = result && selected ? result.spectra.ids.indexOf(selected) : -1;
+  const selectedGroup = result && selectedIndex >= 0 ? result.spectra.groups[selectedIndex] : '';
+  const processing = config ? [config.scatter === 'none' ? '散乱補正なし' : config.scatter.toUpperCase(), config.smooth ? `SG ${config.window}点` : '', config.derivative ? `${config.derivative}次微分` : ''].filter(Boolean).join(' / ') : '';
+  const resultProcessing = result ? [result.metadata.settings.scatter === 'none' ? '補正なし' : result.metadata.settings.scatter.toUpperCase(), result.metadata.settings.smooth ? `SG ${result.metadata.settings.window}点` : '', result.metadata.settings.derivative ? `${result.metadata.settings.derivative}次微分` : ''].filter(Boolean).join(' / ') : '';
+
+  return <div className="app-shell">
+    <a className="skip-link" href="#workspace">解析画面へ移動</a>
+    <input className="visually-hidden" type="file" accept=".csv,.xlsx,.xls" ref={fileInput} onChange={e => chooseFile(e.target.files?.[0])} disabled={disabled} />
+    {menu && <button className="sidebar-scrim" aria-label="メニューを閉じる" onClick={() => setMenu(false)} />}
+    <aside className={`sidebar ${menu ? 'is-open' : ''}`}>
+      <a className="brand" href="#" onClick={e => { e.preventDefault(); navigate('setup'); }}><span className="brand-mark"><Waves size={25} strokeWidth={1.3} /></span><span>aquaphotomics<small>ANALYSIS WORKBENCH</small></span></a>
+      <div className="sidebar-divider" />
+      <div className="nav-caption">WORKSPACE <span>01</span></div>
+      <nav aria-label="解析メニュー">{([{ id: 'setup', icon: SlidersHorizontal, name: 'データと解析設定', index: '01' }, { id: 'spectra', icon: Activity, name: 'スペクトル', index: '02' }, { id: 'pca', icon: ScatterChart, name: '主成分分析', index: '03' }, { id: 'aquagram', icon: Radar, name: 'Aquagram', index: '04' }] as const).map(item => <button key={item.id} className={`nav-item ${view === item.id ? 'active' : ''}`} onClick={() => navigate(item.id)} aria-current={view === item.id ? 'page' : undefined}><item.icon size={18} strokeWidth={1.5} /><span>{item.name}</span><small>{item.index}</small></button>)}</nav>
+      <div className="sidebar-data"><div className="nav-caption">DATA SOURCE <Database size={12} /></div>{summary ? <><div className="source-icon"><FileSpreadsheet size={18} /><span title={summary.name}>{summary.name}</span></div><p>{summary.rowCount.toLocaleString()} samples <i /> {summary.wavelengthColumns.length.toLocaleString()} wavelengths</p>{demo && <span className="demo-label dark"><FlaskConical size={11} /> 人工サンプル</span>}<button className="sidebar-link" disabled={disabled} onClick={() => fileInput.current?.click()}>データを変更 <Plus size={13} /></button></> : <><p className="no-source">データが読み込まれていません</p><button className="sidebar-link" disabled={disabled} onClick={() => fileInput.current?.click()}>ファイルを読み込む <Plus size={13} /></button></>}</div>
+      <div className="sidebar-bottom"><div className="local-status"><span /> BROWSER-BASED ANALYSIS</div><p>データは、このブラウザーの中で。<br />解析用サーバーへの送信はありません。</p><button onClick={() => setHelp(true)}><CircleHelp size={14} /> このワークベンチについて <ArrowUpRight size={12} /></button><div className="sidebar-version">AQUAPHOTOMICS TOOL <span>v0.1</span></div></div>
+    </aside>
+    <div className="main-shell">
+      <header className="topbar"><div className="breadcrumb"><button className="mobile-menu icon-button" aria-label="メニューを開く" onClick={() => setMenu(true)}><Menu size={20} /></button><span>WORKSPACE</span><ChevronRight size={12} /><strong>{viewNames[view]}</strong></div><div className="topbar-actions"><span className="local-pill"><span /> LOCAL PROCESSING</span><button className="icon-button help-button" aria-label="使い方と解析方法" onClick={() => setHelp(true)}><CircleHelp size={17} /></button><span className="topbar-separator" /><button className="export-button" onClick={() => void saveZip()} disabled={!result || disabled}><ArrowDownToLine size={15} /><span>{exporting ? '保存中' : '解析を保存'}</span></button></div></header>
+      <main id="workspace" className="main-content">
+        {(busy || exporting) && <div className="processing-banner" role="status" aria-live="polite"><span className="spinner" /><span>{exporting ? exportStatus : progress?.message ?? '処理しています'}</span>{busy && <button onClick={cancel}><X size={13} /> 中止</button>}</div>}
+        {error && <div className="notice error" role="alert"><span>{error}</span><button aria-label="エラーを閉じる" onClick={() => setError('')}><X size={15} /></button></div>}
+        {notice && <div className="notice success" role="status"><Check size={15} /><span>{notice}</span><button aria-label="通知を閉じる" onClick={() => setNotice('')}><X size={15} /></button></div>}
+        {view === 'setup' ? <>
+          {!summary && <section className="hero"><div className="hero-copy"><div className="eyebrow"><span /> EXPLORE THE LANGUAGE OF WATER</div><h1>水のゆらぎを、<br />データから読み解く<span>。</span></h1><p>スペクトルの前処理から、多変量解析、Aquagramまで。<br />水が映し出す小さな違いを、ひとつのワークスペースで。</p><div className="hero-foot"><span>PREPROCESS</span><i /><span>EXPLORE</span><i /><span>UNDERSTAND</span></div></div><div className="water-art" aria-hidden="true"><div className="water-disc"><span /><span /><span /><span /><span /></div><div className="water-coordinate coordinate-top">H₂O — NIR SPECTROSCOPY</div><div className="water-coordinate coordinate-bottom">SPECTRAL PATTERNS / NEW PERSPECTIVES</div></div></section>}
+          <div className="page-heading"><div><div className="eyebrow">{summary ? 'ANALYSIS CONFIGURATION' : 'START YOUR ANALYSIS'}</div><h1>{summary ? 'データと解析設定' : 'まずは、データから。'}</h1><p>{summary ? '解析対象と前処理を確認して、データを探索しましょう。' : 'CSVまたはExcelファイルを読み込むと、解析を始められます。'}</p></div>{summary && <button className="button outline" disabled={disabled} onClick={() => { const initial = defaults(summary); setConfig(initial); setWaterText(initial.aquagramWavelengths.join(', ')); }}><RefreshCw size={14} /> 設定をリセット</button>}</div>
+          {!summary ? <section className={`upload-panel glass-panel ${dragging ? 'dragging' : ''}`} onDragOver={e => { e.preventDefault(); if (!disabled) setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={e => { e.preventDefault(); setDragging(false); if (!disabled) chooseFile(e.dataTransfer.files?.[0]); }}><div className="upload-symbol"><Upload size={25} strokeWidth={1.3} /></div><div className="upload-copy"><h2>測定データをドロップ</h2><p>CSV / Excel（.xlsx, .xls）<span>試料 × 波長の表形式</span></p></div><button className="button primary" disabled={disabled} onClick={() => fileInput.current?.click()}>ファイルを選択 <ArrowUpRight size={15} /></button><div className="upload-divider" /><button className="demo-start" disabled={disabled} onClick={() => void load({ kind: 'demo' })}><FlaskConical size={19} strokeWidth={1.3} /><span>サンプルで試す<small>動作確認用の人工スペクトル</small></span><ArrowRight size={16} /></button></section> : config && <>
+            <section className="dataset-bar glass-panel"><div className="dataset-file"><div className="dataset-file-icon"><FileSpreadsheet size={23} strokeWidth={1.3} /></div><div><strong title={summary.name}>{summary.name}</strong><p>{summary.rowCount.toLocaleString()} 試料<span>×</span>{summary.wavelengthColumns.length.toLocaleString()} 波長列 {demo && <span className="demo-label"><FlaskConical size={11} /> 人工サンプル</span>}</p></div></div><button className="button subtle" disabled={disabled} onClick={() => fileInput.current?.click()}>別のファイル <Upload size={14} /></button></section>
+            {demo && <div className="demo-note"><FlaskConical size={14} /> このデータは動作確認用の人工サンプルです。実測データや研究上の結論を示すものではありません。</div>}
+            <fieldset disabled={disabled} className="config-fieldset"><section className="glass-panel settings-panel"><SectionTitle index="01" title="データの構成" caption="試料情報と、解析する波長列を指定します。" /><div className="data-settings"><div className="form-grid">{summary.sheets.length > 0 && <Field label="Excelシート" wide><select value={summary.sheet ?? ''} onChange={e => { if (source.current?.kind === 'file') void load({ ...source.current, sheet: e.target.value }); }}>{summary.sheets.map(sheet => <option key={sheet}>{sheet}</option>)}</select></Field>}<Field label="試料IDの列" hint="指定しない場合は行番号を使用"><select value={config.idColumn ?? ''} onChange={e => update('idColumn', e.target.value || null)}><option value="">行番号を使用</option>{summary.columns.map(col => <option key={col}>{col}</option>)}</select></Field><Field label="グループの列" hint="グラフとAquagramの群分けに使用"><select value={config.groupColumn ?? ''} onChange={e => update('groupColumn', e.target.value || null)}><option value="">グループなし</option>{summary.columns.map(col => <option key={col}>{col}</option>)}</select></Field></div><div className="wave-columns"><div><strong>波長列</strong><span>{config.wavelengthColumns.length} / {summary.wavelengthColumns.length} 列を選択</span></div><p>列名から波長を検出しました。単位は nm として扱います。</p><details><summary>解析する列を確認・変更 <ChevronRight size={13} /></summary><div className="column-actions"><button type="button" onClick={() => update('wavelengthColumns', summary.wavelengthColumns.map(x => x.column))}>すべて選択</button><button type="button" onClick={() => update('wavelengthColumns', [])}>解除</button></div><div className="column-list">{summary.wavelengthColumns.map(col => <label key={col.column}><input type="checkbox" checked={config.wavelengthColumns.includes(col.column)} onChange={e => update('wavelengthColumns', e.target.checked ? [...config.wavelengthColumns, col.column] : config.wavelengthColumns.filter(x => x !== col.column))} />{col.column}<small>{col.wavelength} nm</small></label>)}</div></details></div></div><details className="data-preview"><summary>データプレビュー <span>先頭 {Math.min(5, summary.preview.length)} 行・{Math.min(10, summary.columns.length)} 列</span><ChevronRight size={14} /></summary><div className="preview-table-wrap"><table><thead><tr>{summary.columns.slice(0, 10).map(col => <th key={col}>{col}</th>)}</tr></thead><tbody>{summary.preview.slice(0, 5).map((row, i) => <tr key={i}>{row.slice(0, 10).map((value, j) => <td key={j}>{fmt(value)}</td>)}</tr>)}</tbody></table></div></details></section>
+            <div className="analysis-settings-grid"><section className="glass-panel settings-panel"><SectionTitle index="02" title="スペクトルの前処理" caption="欠損値、散乱補正、平滑化の順に適用します。" /><div className="field-range"><label>解析する波長範囲 <small>nm</small></label><div><input aria-label="波長範囲の下限" type="number" step="any" value={config.range[0]} onChange={e => update('range', [Number(e.target.value), config.range[1]])} /><span>—</span><input aria-label="波長範囲の上限" type="number" step="any" value={config.range[1]} onChange={e => update('range', [config.range[0], Number(e.target.value)])} /></div></div><div className="form-grid"><Field label="欠損値"><select value={config.missing} onChange={e => update('missing', e.target.value as AnalysisConfig['missing'])}><option value="error">欠損があれば解析を停止</option><option value="median">波長列ごとの中央値で補完</option></select></Field><Field label="散乱補正"><select value={config.scatter} onChange={e => update('scatter', e.target.value as AnalysisConfig['scatter'])}><option value="none">補正なし</option><option value="snv">SNV · 標準正規変量</option><option value="msc">MSC · 乗算散乱補正</option></select></Field></div><div className="setting-divider" /><label className="toggle-row"><span><strong>Savitzky–Golay 平滑化</strong><small>局所多項式でスペクトルを平滑化</small></span><input type="checkbox" role="switch" checked={config.smooth} onChange={e => update('smooth', e.target.checked)} /><i /></label><div className="form-grid triple"><Field label="ウィンドウ幅" hint="奇数の点数"><input type="number" min={3} step={2} value={config.window} disabled={!config.smooth && config.derivative === 0} onChange={e => update('window', Number(e.target.value))} /></Field><Field label="多項式次数"><input type="number" min={1} max={6} value={config.polyorder} disabled={!config.smooth && config.derivative === 0} onChange={e => update('polyorder', Number(e.target.value))} /></Field><Field label="微分"><select value={config.derivative} onChange={e => update('derivative', Number(e.target.value) as 0 | 1 | 2)}><option value={0}>微分なし</option><option value={1}>1 次微分</option><option value={2}>2 次微分</option></select></Field></div><p className="field-note">不等間隔の波長は、SG処理前に等間隔へ補間します。</p></section>
+            <section className="glass-panel settings-panel"><SectionTitle index="03" title="PCA・Aquagram" caption="前処理後のデータを、2つの視点で探索します。" /><div className="pca-config"><div className="form-grid"><Field label="PCAの主成分数"><input type="number" min={1} max={Math.min(20, summary.rowCount - 1, config.wavelengthColumns.length)} value={config.components} onChange={e => update('components', Number(e.target.value))} /></Field><div className="pca-scale"><label><input type="checkbox" checked={config.pcaScale} onChange={e => update('pcaScale', e.target.checked)} /><span>波長ごとに標準化<small>平均中心化は常に適用</small></span></label></div></div></div><div className="setting-divider" /><Field label="Aquagramの波長 / nm" hint="数値をカンマ区切りで指定。3点以上。"><textarea rows={2} value={waterText} onChange={e => { setWaterText(e.target.value); update('aquagramWavelengths', parseWaves(e.target.value).waves); }} aria-invalid={!parsedWater.valid} /></Field><div className="form-grid aquagram-config"><Field label="比較の基準" hint="空欄＝全体平均、群名を入力＝対照群"><input list="reference-groups" placeholder="全体平均（空欄）" value={config.aquagramReference === 'global' ? '' : config.aquagramReference.replace(/^group:/, '')} onChange={e => update('aquagramReference', e.target.value ? `group:${e.target.value}` : 'global')} /><datalist id="reference-groups">{groups.map(group => <option key={group} value={group} />)}</datalist></Field><Field label="波長の許容誤差 / nm"><input type="number" min={0} step="0.1" value={config.aquagramTolerance} onChange={e => update('aquagramTolerance', Number(e.target.value))} /></Field></div><p className="field-note">群平均との差を全試料の標準偏差で割った値を表示します。波長から分子種を自動判定しません。</p></section></div></fieldset>
+            <div className="run-panel"><div><span className="ready-dot" /><strong>解析の準備ができました</strong><p>{config.range[0]}–{config.range[1]} nm <span>·</span> {processing}</p></div><button className="button primary run-button" disabled={disabled || config.wavelengthColumns.length < 3} onClick={() => void analyze()}><Play size={14} fill="currentColor" /> {result ? '設定を適用して再解析' : '解析を実行'}<ArrowRight size={17} /></button></div>
+          </>}
+          {!summary && <div className="initial-notes"><div><ShieldCheck size={17} strokeWidth={1.3} /><span>データは端末内で処理<small>初回はPython実行環境を取得します。</small></span></div><div><Settings2 size={17} strokeWidth={1.3} /><span>研究の手順を、記録する<small>適用設定と結果をまとめて保存。</small></span></div><div><Activity size={17} strokeWidth={1.3} /><span>ひとつの波長、その先へ<small>前処理・PCA・Aquagramを連続して探索。</small></span></div></div>}
+        </> : !result || !figures ? <section className="empty-results glass-panel"><div className="empty-visual"><Waves size={42} strokeWidth={1.1} /></div><span className="eyebrow">READY WHEN YOU ARE</span><h1>{viewNames[view]}を、ここから。</h1><p>{summary ? 'データと解析条件を確認して、解析を実行してください。' : '測定データを読み込むか、人工サンプルで操作を試してください。'}</p><button className="button primary" disabled={disabled} onClick={() => navigate('setup')}>{summary ? '解析設定へ' : 'データを読み込む'}<ArrowRight size={16} /></button></section> : <>
+          <div className="page-heading result-heading"><div><div className="eyebrow">{view === 'spectra' ? 'SPECTRAL EXPLORATION' : view === 'pca' ? 'PRINCIPAL COMPONENT ANALYSIS' : 'WATER SPECTRAL PATTERN'}</div><h1>{view === 'pca' ? '主成分分析' : view === 'aquagram' ? 'Aquagram' : 'スペクトルを、見渡す。'}</h1><p>{view === 'spectra' ? '全体の形から、ひとつの試料の違いまで。' : view === 'pca' ? '多次元のスペクトルに潜む、試料間の関係を探索します。' : '選んだ波長の応答を、群ごとのパターンとして比較します。'}</p></div><button className="button outline" onClick={() => navigate('setup')}><SlidersHorizontal size={14} /> 解析設定</button></div>
+          <div className="result-context"><div><span className="source-indicator" /><span title={resultName}>{resultName}</span>{demo && <span className="demo-label"><FlaskConical size={11} /> 人工サンプル</span>}</div><span>{result.metadata.samples} 試料 <i /> {result.metadata.variables} 波長 <i /> {result.metadata.range[0]}–{result.metadata.range[1]} nm</span></div>
+          {stale && <div className="notice stale"><RefreshCw size={15} /><span>設定が変更されています。表示と保存は、直前に完了した解析結果です。</span><button disabled={disabled} onClick={() => void analyze()}>再解析 <ArrowRight size={13} /></button></div>}
+          {result.metadata.warnings.length > 0 && <details className="warnings"><summary>解析時の確認事項 <span>{result.metadata.warnings.length}</span><ChevronRight size={13} /></summary><ul>{result.metadata.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul></details>}
+          <section className="chart-panel glass-panel"><div className="chart-toolbar"><div className="segmented" aria-label="表示を切り替え">{view === 'spectra' ? <><button aria-pressed={spectrumMode === 'processed'} onClick={() => setSpectrumMode('processed')}>前処理後</button><button aria-pressed={spectrumMode === 'raw'} onClick={() => setSpectrumMode('raw')}>元のスペクトル</button></> : view === 'pca' ? <><button aria-pressed={pcaMode === 'scores'} onClick={() => setPcaMode('scores')}>スコア</button><button aria-pressed={pcaMode === 'loadings'} onClick={() => setPcaMode('loadings')}>ローディング</button><button aria-pressed={pcaMode === 'variance'} onClick={() => setPcaMode('variance')}>寄与率</button></> : <span className="chart-type-label"><Radar size={16} /> 標準化した群平均差</span>}</div><div className="chart-toolbar-end">{view === 'pca' && pcaMode === 'scores' && <div className="axis-controls"><label>X<select value={axisX} onChange={e => setAxisX(Number(e.target.value))}>{result.pca.explainedVariance.map((_, i) => <option value={i} key={i}>PC{i + 1}</option>)}</select></label>{result.pca.explainedVariance.length > 1 && <label>Y<select value={axisY} onChange={e => setAxisY(Number(e.target.value))}>{result.pca.explainedVariance.map((_, i) => <option value={i} key={i}>PC{i + 1}</option>)}</select></label>}</div>}{view === 'spectra' && <span className="processing-label">{spectrumMode === 'processed' ? resultProcessing : 'RAW DATA'}</span>}<button className="icon-button" aria-label="グラフの操作方法" onClick={() => setHelp(true)}><CircleHelp size={16} /></button></div></div>
+            <Plot figure={view === 'spectra' ? figures[spectrumMode] : view === 'pca' ? figures[pcaMode] : figures.aquagram} label={`${viewNames[view]}グラフ`} onSelect={view === 'aquagram' || view === 'pca' && pcaMode !== 'scores' ? undefined : id => setSelected(old => old === id ? null : id)} />
+            <div className="chart-footer">{view === 'aquagram' ? <span>基準：{result.aquagram.reference} <i /> 適用した実波長で表示</span> : <span><MousePointer2 size={12} /> {view === 'pca' && pcaMode !== 'scores' ? 'ドラッグで拡大。ダブルクリックで表示をリセット。' : '線や点をクリックして試料を選択。スペクトルとPCAに連動します。'}</span>}<span>{view === 'spectra' && result.metadata.samples > 200 ? '最大200試料を表示・選択試料を追加' : 'スクロールでズーム'}</span></div>
+          </section>
+          {view !== 'aquagram' && <div className="result-bottom-grid"><section className="selection-panel glass-panel"><div className="panel-caption">SELECTED SAMPLE</div>{selected ? <><div className="selected-sample"><div><h3>{selected}</h3><p>グループ：{selectedGroup}</p></div><button className="icon-button" aria-label="試料の選択を解除" onClick={() => setSelected(null)}><X size={15} /></button></div><button className="text-link" onClick={() => navigate(view === 'spectra' ? 'pca' : 'spectra')}>{view === 'spectra' ? 'PCAでこの試料を見る' : 'この試料のスペクトルを見る'}<ArrowUpRight size={13} /></button></> : <><h3>気になる試料を、選んでみる。</h3><p>グラフの線や点をクリックすると、試料を連動表示します。</p></>}<select className="sample-select" aria-label="表示する試料を選ぶ" value={selected ?? ''} onChange={e => setSelected(e.target.value || null)}><option value="">試料IDから選択</option>{result.spectra.ids.map((id, i) => <option key={`${id}-${i}`} value={id}>{id}</option>)}</select></section><section className="insight-panel glass-panel"><div className="panel-caption">{view === 'spectra' ? 'PROCESSING SUMMARY' : 'EXPLAINED VARIANCE'}</div>{view === 'spectra' ? <><div className="mini-pipeline"><span>元データ</span><ChevronRight size={13} /><span>{result.metadata.settings.scatter === 'none' ? '散乱補正なし' : result.metadata.settings.scatter.toUpperCase()}</span><ChevronRight size={13} /><span>{result.metadata.settings.smooth ? 'SG平滑化' : '平滑化なし'}</span>{result.metadata.settings.derivative > 0 && <><ChevronRight size={13} /><span>{result.metadata.settings.derivative}次微分</span></>}</div><p>{result.metadata.settings.missing === 'median' ? '欠損値は波長列ごとの中央値で補完。' : '欠損値があれば解析を停止する設定。'} 表示は実際に適用された設定です。</p></> : <><div className="variance-metrics"><div><span>PC1</span><strong>{pct(result.pca.explainedVariance[0] ?? 0)}</strong></div><div><span>{result.pca.explainedVariance.length > 1 ? 'PC1 + PC2' : '累積寄与率'}</span><strong>{pct(result.pca.explainedVariance.slice(0, 2).reduce((a, b) => a + b, 0))}</strong></div><div><span>算出した成分</span><strong>{result.pca.explainedVariance.length}<small> components</small></strong></div></div><p>平均中心化{result.metadata.settings.pcaScale ? ' ＋ 波長ごとの標準化' : '・波長ごとの標準化なし'}。寄与率は全分散に対する割合です。</p></>}</section></div>}
+          {view === 'aquagram' && <div className="aquagram-method glass-panel"><div><div className="panel-caption">HOW TO READ</div><h3>大きさよりも、パターンを見る。</h3></div><p>{result.aquagram.definition}<br />0は選択した基準と同じ平均値を表します。この図だけから水の分子種や試料の優劣を断定しません。</p></div>}
+        </>}
+        <footer className="workspace-footer"><span>AQUAPHOTOMICS WORKBENCH</span><span>Observe. Compare. Discover.</span></footer>
+      </main>
+    </div>
+    {help && <div className="modal-backdrop" onClick={() => setHelp(false)}><section className="help-modal glass-panel" role="dialog" aria-modal="true" aria-labelledby="help-title" onClick={e => e.stopPropagation()}><button className="modal-close icon-button" aria-label="説明を閉じる" onClick={() => setHelp(false)}><X size={19} /></button><Waves size={30} strokeWidth={1.2} /><div className="eyebrow">AQUAPHOTOMICS WORKBENCH</div><h2 id="help-title">データの準備と、解析の読み方</h2><ol><li><strong>表を読み込む</strong><p>1行が1試料、波長名の列が測定値です。CSVはUTF-8、Excelはシートを選択できます。列名は1300、1300nmなど、波長を示す形式にしてください。</p></li><li><strong>前処理と解析条件を設定</strong><p>ID・グループを指定し、欠損処理、散乱補正、SG処理を確認します。PCAは平均中心化を行い、波長ごとの標準化は選択できます。</p></li><li><strong>結果を探索する</strong><p>グラフをドラッグして拡大、ダブルクリックでリセット。線やスコア点をクリックすると同じ試料を連動表示します。Aquagramは群平均との差を標準化した表示です。</p></li><li><strong>解析を保存する</strong><p>元ファイル、前処理後CSV、PCA、Aquagram、適用設定、PNGをZIPに保存します。設定変更後も、再解析するまでは直前の結果が表示・保存されます。</p></li></ol><div className="help-privacy"><ShieldCheck size={17} /><p>測定データはブラウザー内で処理します。初回はPyodideと解析ライブラリの取得にインターネット接続が必要です。大きなデータの処理速度・メモリ使用量は端末に依存します。</p></div><button className="button primary" onClick={() => setHelp(false)}>ワークスペースに戻る <ArrowRight size={15} /></button></section></div>}
+  </div>;
+}

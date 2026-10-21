@@ -1,95 +1,49 @@
 # Aquaphotomics Workbench
 
-Streamlit Cloudで動かすことを前提にした、スペクトルデータ解析用の小型ワークベンチです。
-CSV / Excelをアップロードし、前処理、PCA、PLSプレビュー、Aquagram表示、結果のダウンロードまでを画面から操作できます。
+CSV・Excelのスペクトルを読み込み、前処理、PCA、Aquagram、結果保存まで行う研究用Webアプリの初版。React・Vite・TypeScript、Pyodide Web Workerを用い、VKC Visualizer 2のWeb版と技術構成を揃えています。
 
-## できること
+黒・白・グレー、透明なパネルと大きなインタラクティブグラフによる日本語UIです。入力データと解析結果はブラウザーのメモリー内で処理します。サーバーへの解析データのアップロード、解析データの永続保存は行いません。初回のPython実行環境・ライブラリ取得にはネット接続が必要です。
 
-- CSV / XLSX / XLSのアップロード
-- サンプルID列、群・クラス列、目的変数列の選択
-- 波長列の自動検出
-- 波長範囲の絞り込み
-- SNV、MSC、Savitzky-Golay平滑化、1次/2次微分
-- スペクトル表示
-- PCA score / loading表示
-- PLSプレビュー
-- Aquagram表示
-- processed spectra、PCA scores、Aquagram、図のZIP出力
-- Rscript接続チェック
-- aquap2セットアップ補助
+## 起動
 
-## 入力データの形式
+Node.js >=22.18、pnpm 11.25.0。
 
-1行を1サンプルにしてください。
-波長列は、列名に数値波長が入っていれば自動検出されます。
-
-例:
-
-```csv
-sample_id,group,temperature_c,wl_1300,wl_1305,wl_1310,...
-S001,Control,25.1,0.71,0.72,0.73,...
-S002,Treatment,25.0,0.70,0.71,0.72,...
+```powershell
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
-対応しやすい波長列名:
+表示されたローカルURLを開きます。ビルドは `pnpm build`。`dist/` を静的ホストへ配置できます。解析プログラムは開発・ビルド前に `python/workbench.py` から `public/python/workbench.py` へ同期されます。
 
-- `wl_1450`
-- `1450`
-- `nm_1450`
-- `wavelength_1450`
+## 使い方
 
-## ローカル実行
+1. 「人工データで試す」またはCSV・XLSX・XLSを読み込みます。Excelはシートを選択できます。1行が1試料、列見出しに波長（例 `1440`、`1440nm`、`wl_1440`）を含む横長形式を使います。
+2. 試料ID、群、解析に使う波長列と範囲を確認します。
+3. 欠損値の扱い、SNV/MSC、Savitzky–Golay平滑化・1次/2次微分を設定します。
+4. 解析を実行し、元スペクトルと処理後、PCA、Aquagramを比較します。PCA点とスペクトルの選択は連動します。
+5. 結果ZIPを保存します。CSV、解析条件、方式の説明、グラフPNGを含みます。設定変更後は再解析が必要です。保存には結果に実際に適用した設定を使います。
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py
-```
+## 計算と範囲
 
-R backendを使う場合は、別途RとRscriptが必要です。
+- 前処理順序は欠損処理 → SNV/MSC → SG平滑化/微分。非等間隔の波長はSGの前に等間隔へ補間し、警告と適用条件に残します。
+- PCAは中心化し、オプションで波長ごとの単位分散化を行います。主成分の符号は実行環境で反転しても同じ解です。
+- Aquagramは **（各群の処理後平均 − 全体平均または対照群平均）÷全試料の標準偏差** の方式です。使用波長と基準を表示・保存します。指定波長と実波長の差が許容値を超える場合や範囲外の場合はエラーにします。aquap2の計算を実行した結果ではありません。
+- 人工データは操作確認用で、水の状態・分子種や実験の有意差を示すものではありません。微分やAquagramだけで水分子種を自動判定しません。
+- 初版はPLS・PLS-DA・R実行・aquap2専用形式に対応しません。
+- 入力ファイルは50 MiB以下、波長列は1万列以下。解析行列は200万要素以下。速度と実際の利用可能量は端末に依存します。
 
-## Streamlit Community Cloudへの配置
+## 構成
 
-このフォルダをGitHubリポジトリに置き、Streamlit Community Cloudで `app.py` を指定してデプロイします。
+- `src/`: React UI、Plotly、Workerクライアント
+- `python/workbench.py`: UIから独立した解析コア
+- `tests/`: 解析・入出力の検証
+- `samples/`: 人工データのCSV/Excel
+- `legacy/`: 元のStreamlit版の参照用コピー（新アプリの実行には不要）
 
-必要ファイル:
+通常Pythonでの検証は `python -m pytest tests/test_workbench.py -q`（numpy, pandas, scipy, scikit-learn, openpyxl, xlrd, pytestが必要。XLS生成テストにはxlwtも使用）。Workerクライアント検証は `node tests/client-lifecycle.mjs`。型検査・ビルドは `pnpm build`。
 
-```text
-app.py
-requirements.txt
-packages.txt
-r_backend/
-sample_data/
-.streamlit/config.toml
-```
+## 保存先
 
-`requirements.txt` はPythonパッケージ用です。
-`packages.txt` はRなどのLinuxパッケージ用です。
+Dropbox唯一の保存先：`/Yamaguchi Takehiko/private/Codex/プロジェクト/アクアフォトミクス関連プロジェクト`。共通保存ルール1.0を適用。今回の制作ソース、配布ビルド、検証結果を版付きアーカイブへ保存し、ルートの引継ぎ・移行記録に結果を記録します。認証情報やnode_modulesは含めません。
 
-## R / aquap2 backend
-
-画面の「R環境」タブで以下を確認できます。
-
-1. `Rscript` が見つかるか
-2. Rのバージョン
-3. aquap2が利用可能か
-4. aquap2の初回セットアップ
-
-初回セットアップは数分かかる場合があります。
-Streamlit Cloudの環境やRパッケージ依存関係によっては、aquap2のインストールに失敗することがあります。
-その場合でも、Python previewエンジンで基本解析は継続できます。
-
-## aquap2専用データへの接続
-
-現在のR backendは、汎用CSVを受け取り、R側で前処理・PCA・Aquagram用テーブルを作る構成です。
-aquap2の専用データ構造や研究室独自フォーマットに合わせる場合は、`r_backend/run_analysis.R` の入力変換部分を差し替えてください。
-
-## 配色
-
-UIは以下の色だけを使う方針にしています。
-
-- White: `#ffffff`
-- Gray: `#f4f5f7`, `#e5e7eb`, `#b8beca`, `#6b7280`, `#374151`
-- Navy: `#1f2f54`
-- Black: `#000000`
+元コード: https://github.com/tk-ymgch/aquaphotomicsTool （mainの初期実装）。基盤参考: https://github.com/tk-ymgch/vkcvisualizer2/tree/codex/user-registration 。

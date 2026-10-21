@@ -1,6 +1,10 @@
+node_modules/
+.pnpm-store/
+dist/
+.openai/local/
+*.tsbuildinfo
 __pycache__/
-.streamlit/secrets.toml
-.runtime/
-r_libs/
 *.pyc
-.DS_Store
+qa/
+.pytest_cache/
+

@@ -1,0 +1,32 @@
+{
+  "name": "aquaphotomics-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "sync:python": "node scripts/sync-python.mjs",
+    "dev": "node scripts/sync-python.mjs && vite --host 127.0.0.1",
+    "build": "node scripts/sync-python.mjs && tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "plotly.js-strict-dist-min": "2.32.0",
+    "fflate": "0.8.2",
+    "lucide-react": "^0.468.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/plotly.js": "^3.0.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.3"
+  }
+}
