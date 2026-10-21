@@ -13,7 +13,19 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-表示されたローカルURLを開きます。ビルドは `pnpm build`。`dist/` を静的ホストへ配置できます。解析プログラムは開発・ビルド前に `python/workbench.py` から `public/python/workbench.py` へ同期されます。
+表示されたローカルURLを開きます。`pnpm dev` と `pnpm preview` はローカルでUIを確認するためのコマンドで、パスワード認証を実行しません。解析プログラムは開発・ビルド前に `python/workbench.py` から `public/python/workbench.py` へ同期されます。
+
+## 公開とアクセス認証（v1.1）
+
+公開URL: https://aquaphotomics-workbench.tkymgch.chatgpt.site/
+
+共有パスワードで利用できます。ChatGPTへのログインは不要です。認証はサーバー側で行い、ReactのJS、Python、Excel用wheelを含む全アプリ資源の取得前に署名付きCookieを検証します。CookieはSecure / HttpOnly / SameSite=Strict、8時間で失効します。利用後は画面上部の「ログアウト」を使ってください。データ処理は引き続きブラウザー内で行います。
+
+`pnpm build` はViteの出力を `.client-build/` に生成し、全資源を認証Workerに内包した `dist/server/index.js` と `dist/.openai/hosting.json` を作ります。**distや.client-buildを静的ホストとして公開しないでください。** 本番はWorker ESMとして配置します。`.openai/hosting.json` の既存project_idを使用し、static設定は追加しません。
+
+Sitesの本番シークレットは `SITE_PASSWORD_HASH` と `SESSION_SIGNING_KEY` の2点です。前者の書式は `pbkdf2:100000:<16-byte saltのhex>:<PBKDF2-HMAC-SHA256 32-byte digestのhex>`、後者は暗号学的乱数32-byteのhexです。平文パスワードやこれらの値をソース・.env・成果物へ保存しません。変更時は安全な入力経路で新しい値を生成し、Sitesのsecret環境変数を更新して保存済み版を再デプロイします。ハッシュまたは署名鍵を変更すると既存Cookieも失効します。環境変数がない復元直後は503でアクセスを拒否します。秘密値はアーカイブに含めないため、別環境では管理者が再設定してください。
+
+ログインPOSTは同一Originのみ受け付け、本文サイズを制限します。誤入力は実行インスタンス内で15回/10分を上限に抑制します。この回数制限はサーバー全体で永続共有するものではありません。
 
 ## 使い方
 

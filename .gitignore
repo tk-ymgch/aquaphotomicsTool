@@ -1,6 +1,10 @@
 node_modules/
 .pnpm-store/
 dist/
+.client-build/
+.worker-starter/
+.env
+.env.*
 .openai/local/
 *.tsbuildinfo
 __pycache__/
