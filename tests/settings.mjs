@@ -26,7 +26,7 @@ function check(name, test) { try { test(); passed++; } catch (error) { console.e
 check('new document roundtrip and detached snapshots', () => {
   const input = structuredClone(config), doc = createSettingsDocument(input, { name: summary.name });
   assert.equal(doc.format, 'aquaphotomics-workbench-settings');
-  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.2');
+  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.3');
   assert.equal(doc.source.sheet, null); assert.ok(Number.isFinite(Date.parse(doc.createdAt)));
   input.range[0] = 999; input.wavelengthColumns.length = 0;
   assert.deepEqual(decode(doc), config);
@@ -101,4 +101,22 @@ check('PLS type, range, target and group validation', () => {
   // The analysis engine caps requested folds to the available samples/groups.
   assert.equal(decode({ ...config, pls: { ...pls, folds: 10 } }, { ...summary, rowCount: 8 }).pls.folds, 10);
 });
+check('v1.2 imports retain the modern default and v1.3 preserves explicit compatibility', () => {
+  const old = { ...createSettingsDocument(config, null), appVersion: '1.2' };
+  assert.deepEqual(decode(old), config);
+  const legacy = { ...config, pipelineMode: 'legacy-python', missing: 'mean', aquagramReference: 'none' };
+  assert.deepEqual(decode(createSettingsDocument(legacy, null)), legacy);
+  assert.equal(decode({ ...legacy, aquagramReference: 'None' }).aquagramReference, 'none');
+  assert.equal(decode({ ...config, aquagramReference: 'group:none' }).aquagramReference, 'group:none');
+  assert.throws(() => decode({ ...legacy, pipelineMode: 'r' }), /前処理方式/);
+  assert.throws(() => decode({ ...old, appVersion: 1.3 }), /対応していません/);
+});
+check('legacy SG validates Aquagram against the original uneven grid', () => {
+  const wavelengthColumns = [1300, 1303, 1310, 1315, 1320].map(wavelength => ({ column: `wl_${wavelength}`, wavelength }));
+  const dataset = { ...summary, columns: ['sample_id', 'group', ...wavelengthColumns.map(w => w.column)], wavelengthColumns };
+  const legacy = { ...config, pipelineMode: 'legacy-python', missing: 'mean', wavelengthColumns: wavelengthColumns.map(w => w.column), range: [1300, 1320], window: 5, aquagramWavelengths: [1300, 1303, 1320], aquagramTolerance: 0 };
+  assert.deepEqual(decode(legacy, dataset), legacy);
+  assert.throws(() => decode({ ...legacy, pipelineMode: 'modern' }, dataset), /許容誤差/);
+});
 console.log(`PASS: ${passed} settings checks (roundtrip, legacy provenance, strict validation, columns, SG grid, PLS, safety)`);
+

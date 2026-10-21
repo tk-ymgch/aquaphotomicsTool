@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-ENGINE_VERSION = "1.2.0"
+ENGINE_VERSION = "1.3.0"
 MAX_MATRIX_ELEMENTS = 2_000_000
 MAX_VARIABLES = 10_000
 VARIABLE_LIMIT_MESSAGE = "解析する波長数は1万列までです。波長列の選択または波長範囲を減らしてください。"
@@ -29,6 +29,34 @@ AQUAGRAM_DEFINITION = (
     "基準は全体平均または選択した対照群平均です。標準偏差が0の波長の値は0とします。"
     "分子種の同定・定量や温度校正を行う方式ではありません。"
 )
+RAW_AQUAGRAM_DEFINITION = (
+    "前処理後の指定波長における各群の平均値をそのまま表示します。"
+    "基準平均との差や全試料標準偏差による標準化は行いません。"
+    "値の単位・尺度は前処理設定に依存します。分子種の同定・定量や温度校正は行いません。"
+)
+
+
+def _pipeline_mode(value: Any) -> str:
+    if not isinstance(value, str) or value not in {"modern", "legacy-python"}:
+        raise ValueError("処理モードは「標準」または「旧Python互換」を選択してください。")
+    return value
+
+
+def _pipeline_record(mode: str) -> dict:
+    return {
+        "pipelineMode": mode,
+        "order": ["missing", "sg", "scatter"] if mode == "legacy-python" else ["missing", "scatter", "sg"],
+        "implementation": "workbench-python-numpy-scipy-scikit-learn",
+        "aquap2_not_executed": True,
+        "irregularWavelengthPolicy": "median-step-without-interpolation" if mode == "legacy-python" else "linear-interpolation-before-sg",
+        "legacyCompatibilityScope": (
+            "legacy/app.pyのPython前処理順を有効入力・正常SG条件で比較するモード。旧版の欠損補完を合わせるにはmeanを明示選択する。"
+            "PCAの比較範囲は非退化データで旧版と成分数を合わせた平均中心化・非標準化の場合。"
+            "Aquagramは実適用波長・群・基準を合わせて比較する。"
+            "不等間隔SGは旧版と同じ代表間隔median(diff(wl))を用いる等間隔近似。"
+            "全欠損列の0埋め、不正SG条件の自動修正、縮退スペクトルの黙認、旧版PLS校正プレビューは再現しない。"
+        ) if mode == "legacy-python" else "標準処理。旧Python互換を要求する場合は処理モードと補完方式を明示する。",
+    }
 
 
 def _filename(name: str) -> str:
@@ -296,32 +324,56 @@ def _pls_preprocess_fit(x: np.ndarray, wavelengths: np.ndarray, settings: dict, 
     finite = np.isfinite(x)
     if not finite.all() and settings["missing"] == "error":
         raise ValueError(f"{label}: PLS入力に欠損・非数値があります。")
+    mode = _pipeline_mode(settings.get("pipelineMode", "modern"))
     medians = []
+    means = []
     for j in range(x.shape[1]):
         if not finite[:, j].any():
-            raise ValueError(f"{label}: 学習区画の波長 {wavelengths[j]:g} nm が全欠損のため中央値を推定できません。")
+            raise ValueError(f"{label}: 学習区画の波長 {wavelengths[j]:g} nm が全欠損のため補完値を推定できません。")
         medians.append(float(np.median(x[finite[:, j], j])))
-    filled = np.where(finite, x, np.array(medians)[None, :])
-    reference = filled.mean(axis=0).tolist() if settings["scatter"] == "msc" else None
+        means.append(float(np.mean(x[finite[:, j], j])))
+    fill_values = means if settings["missing"] == "mean" else medians
+    filled = np.where(finite, x, np.array(fill_values)[None, :])
     output_wavelengths = wavelengths.copy()
-    if (settings["smooth"] or settings["derivative"] > 0) and not np.allclose(
+    if mode == "modern" and (settings["smooth"] or settings["derivative"] > 0) and not np.allclose(
         np.diff(wavelengths), np.diff(wavelengths)[0], rtol=1e-6, atol=1e-9
     ):
         output_wavelengths = np.linspace(wavelengths[0], wavelengths[-1], len(wavelengths))
     state = {
         "missing": settings["missing"], "medians": medians, "scatter": settings["scatter"],
-        "mscReference": reference, "originalWavelengths": wavelengths.tolist(),
+        "means": means, "imputationValues": fill_values,
+        "mscReference": None, "originalWavelengths": wavelengths.tolist(),
         "wavelengths": output_wavelengths.tolist(), "smooth": settings["smooth"],
         "window": settings["window"], "polyorder": settings["polyorder"],
         "derivative": settings["derivative"], "sgMode": "interp", "snvDdof": 0,
+        "sgDelta": float(np.median(np.diff(output_wavelengths))) if mode == "legacy-python" else float(output_wavelengths[1] - output_wavelengths[0]),
+        **_pipeline_record(mode),
     }
+    reference_input = _pls_sg(filled, state) if mode == "legacy-python" else filled
+    if settings["scatter"] == "msc":
+        state["mscReference"] = reference_input.mean(axis=0).tolist()
     return _pls_preprocess_apply(x, state, label), state
 
 
-def _pls_preprocess_apply(x: np.ndarray, state: dict, label: str) -> np.ndarray:
+def _pls_sg(out: np.ndarray, state: dict) -> np.ndarray:
     from scipy.signal import savgol_filter
 
-    out = np.where(np.isfinite(x), x, np.array(state["medians"])[None, :])
+    original = np.array(state["originalWavelengths"])
+    grid = np.array(state["wavelengths"])
+    if not np.array_equal(original, grid):
+        out = np.array([np.interp(grid, original, row) for row in out])
+    if state["smooth"] or state["derivative"] > 0:
+        delta = state.get("sgDelta", float(grid[1] - grid[0]))
+        out = savgol_filter(out, state["window"], state["polyorder"], deriv=state["derivative"],
+                            delta=delta, axis=1, mode=state["sgMode"])
+    return out
+
+
+def _pls_preprocess_apply(x: np.ndarray, state: dict, label: str) -> np.ndarray:
+    mode = _pipeline_mode(state.get("pipelineMode", "modern"))
+    out = np.where(np.isfinite(x), x, np.array(state.get("imputationValues", state["medians"]))[None, :])
+    if mode == "legacy-python":
+        out = _pls_sg(out, state)
     if state["scatter"] == "msc":
         reference = np.array(state["mscReference"])
         centered = reference - reference.mean()
@@ -335,13 +387,8 @@ def _pls_preprocess_apply(x: np.ndarray, state: dict, label: str) -> np.ndarray:
         out = (out - (means - slopes * reference.mean())[:, None]) / slopes[:, None]
     elif state["scatter"] == "snv":
         out = _scatter_correct(out, "snv")
-    original = np.array(state["originalWavelengths"])
-    grid = np.array(state["wavelengths"])
-    if not np.array_equal(original, grid):
-        out = np.array([np.interp(grid, original, row) for row in out])
-    if state["smooth"] or state["derivative"] > 0:
-        out = savgol_filter(out, state["window"], state["polyorder"], deriv=state["derivative"],
-                            delta=float(grid[1] - grid[0]), axis=1, mode=state["sgMode"])
+    if mode == "modern":
+        out = _pls_sg(out, state)
     if not np.isfinite(out).all():
         raise ValueError(f"{label}: PLS前処理で有限でない値が生じました。単位や前処理を確認してください。")
     _pls_numeric(out, label)
@@ -574,7 +621,8 @@ def _analyze_pls(df: pd.DataFrame, settings: dict, requested: dict, columns: lis
     definition = (
         "単一数値目的変数のPLS回帰。外側CVの各学習区画内で内側CV（最大3分割）により成分数を選び、"
         "全試料の外側OOF予測を元の行順へ戻してRMSE・MAE・R²・biasを計算します。"
-        "各内側/外側の中央値補完、MSC参照、中心化・スケーリングはその学習区画だけから推定します。"
+        "各内側/外側の欠損補完値、MSC参照、中心化・スケーリングはその学習区画だけから推定します。"
+        f"処理モードは{settings.get('pipelineMode', 'modern')}で、前処理順序は保存されたorderに従います。"
         "同点は少ない成分を優先します。curveは全データ内CVによる最終モデル選択用で、外側性能指標ではありません。"
         "校正値は全データで学習した見かけの適合度です。baselineは各外側学習区画の目的変数平均による予測。"
         "residuals=実測目的値−OOF予測、biasCV=平均(OOF予測−実測目的値)。"
@@ -593,6 +641,7 @@ def _analyze_pls(df: pd.DataFrame, settings: dict, requested: dict, columns: lis
               "warnings": warnings, "definition": definition}
     from sklearn import __version__ as sklearn_version
     model_record = {"schemaVersion": "1.0", "engineVersion": ENGINE_VERSION, "settings": applied,
+                    **_pipeline_record(settings.get("pipelineMode", "modern")),
                     "requestedPLS": pls, "analysisSettings": {**settings, "pls": applied},
                     "versions": {"numpy": np.__version__, "pandas": pd.__version__, "scikit-learn": sklearn_version},
                     "targetColumn": target, "columns": columns, "ids": ids, "cvGroups": cv_groups.tolist() if cv_groups is not None else None,
@@ -630,6 +679,7 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
         raise ValueError("解析には2試料以上が必要です。")
     if not isinstance(config, dict):
         raise ValueError("解析設定を読み取れません。設定を確認してください。")
+    pipeline_mode = _pipeline_mode(config.get("pipelineMode", "modern"))
     if not df.columns.is_unique:
         raise ValueError("列名が重複しています。列名を一意にしてください。")
     selected = config.get("wavelengthColumns")
@@ -677,8 +727,8 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
     if len(set(ids)) != len(ids):
         raise ValueError("試料IDが重複しています。一意のID列を指定するか、試料IDの列を「行番号を使用」にしてください。")
     missing = config.get("missing", "error")
-    if missing not in {"error", "median"}:
-        raise ValueError("欠損処理は「エラー」または「列の中央値で補完」を選択してください。")
+    if not isinstance(missing, str) or missing not in {"error", "median", "mean"}:
+        raise ValueError("欠損処理は「エラー」「列の中央値で補完」「列の平均値で補完」を選択してください。")
     try:
         x = df.loc[:, columns].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
     except (ValueError, TypeError) as exc:
@@ -687,20 +737,21 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
     imputed: dict[str, dict] = {}
     if invalid.any():
         if missing == "error":
-            raise ValueError(f"波長列に欠損、非数値、または無限大が{int(invalid.sum())}個あります。データを修正するか中央値補完を選択してください。")
+            raise ValueError(f"波長列に欠損、非数値、または無限大が{int(invalid.sum())}個あります。データを修正するか補完方式を選択してください。")
         for j, column in enumerate(columns):
             mask = invalid[:, j]
             if mask.all():
-                raise ValueError(f"波長列「{column}」に有効な数値がありません。中央値補完はできません。")
+                raise ValueError(f"波長列「{column}」に有効な数値がありません。補完値を計算できません。")
             if mask.any():
-                median = float(np.median(x[~mask, j]))
-                x[mask, j] = median
-                imputed[column] = {"count": int(mask.sum()), "median": median}
-        warnings.append(f"欠損・非数値・無限大の{int(invalid.sum())}セルを各波長列の中央値で補完しました。")
+                value = float(np.mean(x[~mask, j])) if missing == "mean" else float(np.median(x[~mask, j]))
+                x[mask, j] = value
+                imputed[column] = {"count": int(mask.sum()), missing: value}
+        missing_label = "平均値" if missing == "mean" else "中央値"
+        warnings.append(f"欠損・非数値・無限大の{int(invalid.sum())}セルを各波長列の{missing_label}で補完しました。")
     scatter = config.get("scatter", "none")
     if not isinstance(scatter, str):
         raise ValueError("散乱補正の設定を確認してください。")
-    processed = _scatter_correct(x, scatter)
+    processed = _scatter_correct(x, scatter) if pipeline_mode == "modern" else x.copy()
     smooth = config.get("smooth", False)
     scale_pca = config.get("pcaScale", False)
     if not isinstance(smooth, bool) or not isinstance(scale_pca, bool):
@@ -719,18 +770,25 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
             raise ValueError(f"SG窓幅は3以上の奇数で、選択波長数（{len(wavelengths)}）以下にしてください。")
         if polyorder >= window or polyorder < derivative:
             raise ValueError("SG多項式次数は窓幅未満、かつ微分次数以上にしてください。")
+        if pipeline_mode == "legacy-python" and polyorder < 1:
+            raise ValueError("旧Python互換モードのSG多項式次数は1以上にしてください。旧版の自動補正は再現しません。")
         differences = np.diff(wavelengths)
-        if not np.allclose(differences, differences[0], rtol=1e-6, atol=1e-9):
+        if pipeline_mode == "modern" and not np.allclose(differences, differences[0], rtol=1e-6, atol=1e-9):
             interpolated = True
             uniform = np.linspace(wavelengths[0], wavelengths[-1], len(wavelengths))
             raw = np.array([np.interp(uniform, wavelengths, row) for row in x])
             processed = np.array([np.interp(uniform, wavelengths, row) for row in processed])
             wavelengths = uniform
             warnings.append("不等間隔の波長をSG処理前に同じ点数の等間隔格子へ線形補間しました。スペクトルの処理前表示も同じ格子です。元の値はinput.csvに保存されます。")
+        elif pipeline_mode == "legacy-python" and not np.allclose(differences, differences[0], rtol=1e-6, atol=1e-9):
+            warnings.append("旧Python互換モードでは不等間隔波長を補間せず、median(diff(wl))をSGの代表間隔に使用します。等間隔近似であり、実際の局所波長間隔を反映した微分ではありません。")
+        sg_delta = float(np.median(np.diff(wavelengths))) if pipeline_mode == "legacy-python" else float(wavelengths[1] - wavelengths[0])
         processed = savgol_filter(processed, window, polyorder, deriv=derivative,
-                                  delta=float(wavelengths[1] - wavelengths[0]), axis=1, mode="interp")
+                                  delta=sg_delta, axis=1, mode="interp")
         if derivative > 0 and not smooth:
             warnings.append("微分はSavitzky–Golay法で計算しています。平滑化がオフでも微分用の多項式フィルターを適用します。")
+    if pipeline_mode == "legacy-python":
+        processed = _scatter_correct(processed, scatter)
     if not np.isfinite(processed).all():
         raise ValueError("前処理後に有限でない値が生じました。入力値と前処理設定を確認してください。")
 
@@ -787,7 +845,11 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
     reference = config.get("aquagramReference", GLOBAL_REFERENCE)
     if not isinstance(reference, str):
         raise ValueError("Aquagramの基準を選択してください。")
-    if reference.startswith("group:"):
+    if reference in {"none", "None"}:
+        reference = "none"
+        reference_label = "基準なし（前処理後の群平均）"
+        reference_mask = None
+    elif reference.startswith("group:"):
         reference_group = reference[len("group:"):]
         if reference_group not in group_names:
             raise ValueError(f"Aquagramの対照群「{reference_group}」が見つかりません。基準を選び直してください。")
@@ -805,26 +867,29 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
     aq_x = processed[:, positions]
     aq_std = aq_x.std(axis=0, ddof=0)
     aq_constant = aq_std == 0
-    if aq_constant.any():
+    if reference != "none" and aq_constant.any():
         warnings.append("Aquagramの標準偏差が0の波長は、群平均差も0のため表示値を0としました。")
     denominator = np.where(aq_constant, 1.0, aq_std)
-    reference_mean = aq_x[reference_mask].mean(axis=0)
+    reference_mean = aq_x[reference_mask].mean(axis=0) if reference_mask is not None else None
     aq_groups = []
     aq_rows = []
     for group in group_names:
         mask = np.array(groups) == group
-        values = (aq_x[mask].mean(axis=0) - reference_mean) / denominator
-        values[aq_constant] = 0.0
+        values = aq_x[mask].mean(axis=0)
+        if reference != "none":
+            values = (values - reference_mean) / denominator
+            values[aq_constant] = 0.0
         aq_groups.append({"name": group, "values": values.tolist(), "n": int(mask.sum())})
         aq_rows.extend({"group": group, "n": int(mask.sum()), "wavelength_nm": wl, "value": float(value)}
                        for wl, value in zip(actual_targets, values))
-    if len(group_names) == 1:
+    if reference != "none" and len(group_names) == 1:
         warnings.append("群が1つのため、この基準に対するAquagramの群平均差は0です。")
+    aq_definition = RAW_AQUAGRAM_DEFINITION if reference == "none" else AQUAGRAM_DEFINITION
 
     applied = {
         "idColumn": config.get("idColumn"), "groupColumn": config.get("groupColumn"),
         "wavelengthColumns": columns, "range": [float(wavelengths[0]), float(wavelengths[-1])],
-        "missing": missing, "scatter": scatter, "smooth": smooth, "window": window,
+        "pipelineMode": pipeline_mode, "missing": missing, "scatter": scatter, "smooth": smooth, "window": window,
         "polyorder": polyorder, "derivative": derivative, "pcaScale": scale_pca,
         "components": components, "aquagramWavelengths": actual_targets,
         "aquagramReference": reference, "aquagramTolerance": tolerance,
@@ -840,19 +905,22 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
     loadings_df.insert(0, "wavelength_nm", wavelengths)
     provenance = {
         "schemaVersion": "1.0", "engineVersion": ENGINE_VERSION,
+        **_pipeline_record(pipeline_mode),
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "source": {"filename": df.attrs.get("source_name", "データ"),
                    "sheet": df.attrs.get("source_sheet"), "artificial": artificial},
         "requestedConfig": config,
-        "pipeline": ["欠損処理", "散乱補正", "必要時に等間隔線形補間", "SG平滑化・微分"],
+        "pipeline": ["欠損処理", "SG平滑化・微分", "散乱補正"] if pipeline_mode == "legacy-python" else ["欠損処理", "散乱補正", "必要時に等間隔線形補間", "SG平滑化・微分"],
         "interpolated": interpolated, "originalWavelengths": original_wavelengths.tolist(),
         "appliedWavelengths": wavelengths.tolist(), "imputed": imputed,
         "sgApplied": use_sg, "sgMode": "interp", "snvDdof": 0,
-        "mscReference": "欠損処理後の全試料平均スペクトル",
+        "sgDelta": (float(np.median(np.diff(wavelengths))) if pipeline_mode == "legacy-python" else float(wavelengths[1] - wavelengths[0])) if use_sg else None,
+        "irregularWavelengthPolicy": "median-step-without-interpolation" if pipeline_mode == "legacy-python" else "linear-interpolation-before-sg",
+        "mscReference": "欠損処理・SG処理後の全試料平均スペクトル" if pipeline_mode == "legacy-python" else "欠損処理後の全試料平均スペクトル",
         "pcaCentered": True, "pcaScaleDdof": 0, "pcaMean": model.mean_.tolist(),
         "pcaProcessedMean": processed.mean(axis=0).tolist(),
         "pcaInputScales": np.where(constant, 1.0, pca_std).tolist() if scale_pca else [1.0] * len(columns),
-        "aquagramDefinition": AQUAGRAM_DEFINITION,
+        "aquagramDefinition": aq_definition,
         "aquagramMappings": mappings, "warnings": warnings,
         "versions": {"numpy": np.__version__, "pandas": pd.__version__,
                      "scipy": scipy.__version__, "scikit-learn": sklearn.__version__},
@@ -862,13 +930,14 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
         "Aquaphotomics Workbench 解析出力\n"
         + (f"\nこの出力は{ARTIFICIAL}の解析です。実験結果ではありません。\n" if artificial else "")
         + "\n1行が1試料、波長の単位はnmです。入力データはdata/input.csvに保存しています。\n"
-        "data/preprocessed.csv: 欠損処理・散乱補正・必要時の補間・SG処理後の値。\n"
+        f"data/preprocessed.csv: 処理モード {pipeline_mode} の適用順で前処理した値。\n"
         "data/pca_scores.csv: 試料×成分。data/pca_loadings.csv: 波長×成分。\n"
         "data/pca_variance.csv: 寄与率（0〜1）と累積寄与率。\n"
         "PCAは常に平均中心化し、設定により各波長の標準偏差（ddof=0）でスケーリングします。\n"
         "微分を指定した場合は、平滑化スイッチの状態によらずSG多項式フィルターを適用します。\n"
-        "不等間隔波長はSG前に同点数の等間隔格子へ線形補間します。補間は測定分解能を高めるものではありません。\n"
-        f"\nAquagramの定義: {AQUAGRAM_DEFINITION}\n基準: {reference_label}\n"
+        + ("旧Python互換ではSG後に散乱補正し、不等間隔も補間せずSG代表間隔をmedian(diff(wl))とします。これは等間隔近似です。\n" if pipeline_mode == "legacy-python" else "標準処理では散乱補正後にSG処理。不等間隔はSG前に同点数の等間隔格子へ線形補間します。補間は測定分解能を高めるものではありません。\n")
+        + f"\nAquagramの定義: {aq_definition}\n基準: {reference_label}\n"
+        "実装はNumPy・SciPy・scikit-learnによるPython処理です。aquap2は実行していません。\n"
         "settings.jsonの直下は適用設定、_provenanceは元設定・補間・補完値・実行版の記録です。\n"
         "PCA・Aquagramは探索的な表示であり、統計的有意差や未知試料への予測性能を評価しません。\n"
         + ("\n解析時の通知:\n" + "\n".join(f"- {warning}" for warning in warnings) + "\n" if warnings else "")
@@ -879,7 +948,7 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
         "spectra": {"wavelengths": wavelengths.tolist(), "raw": raw.tolist(), "processed": processed.tolist(), "ids": ids, "groups": groups},
         "pca": {"scores": scores.tolist(), "loadings": loadings.tolist(), "explainedVariance": explained.tolist(), "ids": ids, "groups": groups},
         "aquagram": {"wavelengths": actual_targets, "labels": [f"{wl:g} nm" for wl in actual_targets],
-                     "groups": aq_groups, "reference": reference_label, "definition": AQUAGRAM_DEFINITION},
+                     "groups": aq_groups, "reference": reference_label, "definition": aq_definition},
         "exports": {
             "data/input.csv": _csv(df), "data/preprocessed.csv": _csv(processed_df),
             "data/pca_scores.csv": _csv(scores_df), "data/pca_loadings.csv": _csv(loadings_df),

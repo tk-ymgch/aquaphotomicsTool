@@ -23,7 +23,8 @@ export interface DatasetSummary {
 }
 export interface AnalysisConfig {
   idColumn: string | null; groupColumn: string | null; wavelengthColumns: string[];
-  range: [number, number]; missing: 'error' | 'median'; scatter: Scatter;
+  range: [number, number]; missing: 'error' | 'median' | 'mean'; scatter: Scatter;
+  pipelineMode?: 'modern' | 'legacy-python';
   smooth: boolean; window: number; polyorder: number; derivative: 0 | 1 | 2;
   pcaScale: boolean; components: number; aquagramWavelengths: number[];
   aquagramReference: string; aquagramTolerance: number;

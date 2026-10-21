@@ -41,6 +41,8 @@ aquap2には温度校正用の実験・スペクトルを扱う手順があり�
 
 ## 実行基盤と確認範囲
 
+Workbenchとaquap2の計算方式・標準偏差・基準・波長処理の差は[AQUAP2_COMPARISON.md](AQUAP2_COMPARISON.md)を参照してください。「旧Python互換」は旧StreamlitのPython計算を対象にしたもので、旧R実装やaquap2との数値互換を意味しません。
+
 R・aquap2はブラウザー版と別の実行環境です。aquap2の導入・初期設定は利用者が選んだR環境で行い、パッケージ版・依存関係・settingsを記録してください。[aquap2公式リポジトリ](https://github.com/bpollner/aquap2)、[公式案内](https://bpollner.github.io/aquap2/)
 
 base Rの補助読込はRscript 4.6.1で、人工45試料×61波長、日本語group、UTF-8 BOM、RDS再読込と数値一致を確認しています。検証対象は通常のRDSへの引継ぎです。aquap2本体へのadapter実装・取込、固有のAquagram、温度校正、R上でのPLS再学習は実行検証していません。利用者のR環境でも読込結果・波長順序・前処理の整合を確認してください。
