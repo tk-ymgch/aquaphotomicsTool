@@ -98,6 +98,33 @@ def _headers(values: list[Any]) -> list[str]:
     return columns
 
 
+def _import_headers(values: list[Any]) -> tuple[list[str], list[dict]]:
+    """Accept the leading unnamed sample column used by spectral CSV exports.
+
+    Only an indexed spectral table gets this compatibility rule. Other blank
+    headers and duplicate names still go through the strict validation above.
+    """
+    values = list(values)
+    adjustments = []
+    if values and (pd.isna(values[0]) or not str(values[0]).strip().lstrip("\ufeff")):
+        if sum(parse_wavelength(value) is not None for value in values[1:]) >= 3:
+            used = {str(value).strip().lstrip("\ufeff") for value in values[1:] if not pd.isna(value)}
+            assigned, suffix = "sample_id", 2
+            while assigned in used:
+                assigned = f"sample_id_{suffix}"
+                suffix += 1
+            original = None if pd.isna(values[0]) else str(values[0])
+            values[0] = assigned
+            adjustments.append({"columnIndex": 0, "originalHeader": original,
+                                "assignedHeader": assigned, "reason": "unnamed-leading-sample-column"})
+    return _headers(values), adjustments
+
+
+def _import_notes(df: pd.DataFrame) -> list[str]:
+    return [f"先頭列の空欄見出しを「{item['assignedHeader']}」として読み込み、試料ID候補に設定しました。元の試料名・測定値は保持しています。"
+            for item in df.attrs.get("import_adjustments", [])]
+
+
 def _preview_value(value: Any) -> str | int | float | None:
     if pd.isna(value):
         return None
@@ -141,6 +168,9 @@ def _summary(df: pd.DataFrame, name: str, sheets: list[str], sheet: str | None) 
     shown_name = name
     if _is_artificial(df) and "人工" not in name:
         shown_name = f"{name} — {ARTIFICIAL}"
+    adjustments = df.attrs.get("import_adjustments", [])
+    generated_id = adjustments[0]["assignedHeader"] if adjustments else None
+    unity_log = not wavelengths and {"Time", "HMD_Position_x", "Left_Pupil_Diameter"}.issubset(columns)
     return {
         "name": shown_name,
         "artificial": _is_artificial(df),
@@ -149,9 +179,11 @@ def _summary(df: pd.DataFrame, name: str, sheets: list[str], sheet: str | None) 
         "rowCount": int(len(df)),
         "sheets": sheets,
         "sheet": sheet,
-        "suggestedId": _suggest(columns, ("sample_id", "sample", "id", "name", "試料id", "試料名", "サンプルid")),
+        "suggestedId": generated_id or _suggest(columns, ("sample_id", "sample", "id", "name", "試料id", "試料名", "サンプルid")),
         "suggestedGroup": _suggest(columns, ("group", "class", "condition", "treatment", "label", "群", "グループ", "条件")),
         "wavelengthColumns": wavelengths,
+        "importNotes": _import_notes(df),
+        "dataKind": "spectra" if wavelengths else "unity-log" if unity_log else "table",
     }
 
 
@@ -165,6 +197,7 @@ def inspect_bytes(data: bytes, filename: str, sheet: str | None = None) -> tuple
         raise ValueError("ファイルが空です。データを含むファイルを選択してください。")
     sheets: list[str] = []
     selected_sheet: str | None = None
+    adjustments: list[dict] = []
     try:
         if suffix == ".csv":
             text = None
@@ -178,11 +211,14 @@ def inspect_bytes(data: bytes, filename: str, sheet: str | None = None) -> tuple
                 raise ValueError("文字コードを読み取れません。CSVをUTF-8またはCP932で保存してください。")
             reader = csv.reader(io.StringIO(text))
             header = next(reader, [])
-            columns = _headers(header)
+            columns, adjustments = _import_headers(header)
             for record_index, record in enumerate(reader, start=2):
                 if record and len(record) != len(columns):
                     raise ValueError(f"CSVの{record_index}行目で列数が一致しません。区切り文字と引用符を確認してください。")
-            df = pd.read_csv(io.StringIO(text), header=0)
+            # Preserve literal identifiers such as 001, NA and null. Limit
+            # this conversion to the synthesized ID; spectral NA rules stay.
+            df = pd.read_csv(io.StringIO(text), header=0, names=columns,
+                             converters={columns[0]: lambda value: value} if adjustments else None)
             if len(df.columns) != len(columns):
                 raise ValueError("列名とデータの列数が一致しません。CSVの区切りを確認してください。")
             df.columns = columns
@@ -198,7 +234,14 @@ def inspect_bytes(data: bytes, filename: str, sheet: str | None = None) -> tuple
                 raw = pd.read_excel(book, sheet_name=selected_sheet, header=None)
                 if raw.empty:
                     raise ValueError("選択したシートが空です。")
-                columns = _headers(raw.iloc[0].tolist())
+                columns, adjustments = _import_headers(raw.iloc[0].tolist())
+                if adjustments:
+                    # The empty header otherwise allows pandas to infer an
+                    # all-numeric ID column, losing string-cell leading zeros.
+                    identifiers = pd.read_excel(book, sheet_name=selected_sheet,
+                                                header=None, usecols=[0], dtype=object,
+                                                keep_default_na=False).iloc[:, 0]
+                    raw[0] = identifiers.replace("", np.nan)
                 df = raw.iloc[1:].copy()
                 df.columns = columns
                 df.reset_index(drop=True, inplace=True)
@@ -217,6 +260,7 @@ def inspect_bytes(data: bytes, filename: str, sheet: str | None = None) -> tuple
     if df.empty:
         raise ValueError("解析するデータ行がありません。1行目を列名、2行目以降を試料にしてください。")
     df.attrs.update(source_name=name, source_sheet=selected_sheet)
+    df.attrs["import_adjustments"] = adjustments
     df.attrs["artificial"] = _is_artificial(df)
     return df, _summary(df, name, sheets, selected_sheet)
 
@@ -726,7 +770,7 @@ def analyze(df: pd.DataFrame, config: dict, *, calibration: pd.DataFrame | None 
     ids = _labels(df, config.get("idColumn"), "試料ID")
     groups = _labels(df, config.get("groupColumn"), "群")
     group_names = list(dict.fromkeys(groups))
-    warnings: list[str] = []
+    warnings: list[str] = _import_notes(df)
     artificial = _is_artificial(df)
     if artificial:
         warnings.append(f"この解析は{ARTIFICIAL}を使用しています。実験結果として解釈しないでください。")
@@ -914,7 +958,8 @@ def analyze(df: pd.DataFrame, config: dict, *, calibration: pd.DataFrame | None 
         **_pipeline_record(pipeline_mode),
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "source": {"filename": df.attrs.get("source_name", "データ"),
-                   "sheet": df.attrs.get("source_sheet"), "artificial": artificial},
+                   "sheet": df.attrs.get("source_sheet"), "artificial": artificial,
+                   **({"importAdjustments": df.attrs["import_adjustments"]} if df.attrs.get("import_adjustments") else {})},
         "requestedConfig": config,
         "pipeline": ["欠損処理", "SG平滑化・微分", "散乱補正"] if pipeline_mode == "legacy-python" else ["欠損処理", "散乱補正", "必要時に等間隔線形補間", "SG平滑化・微分"],
         "interpolated": interpolated, "originalWavelengths": original_wavelengths.tolist(),
@@ -1146,6 +1191,7 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
         "referenceAquap2Version": report["reference"]["version"], "aquagramSdDdof": result["aquagram"]["sdDdof"],
         "aquagramMode": result["aquagram"].get("mode", "classic")}
     warnings = [warning for warning in result["metadata"]["warnings"] if "最近傍" in warning or "成分数を" in warning or "人工" in warning]
+    warnings.extend(_import_notes(df))
     warnings += ["aquap2pyは非公式の部分移植です。対応一覧に記録した条件でR本体と検証し、今回の入力をRへ送って照合したものではありません。",
         "SNVは標本SD（ddof=1）、SG微分の間隔は列位置1です。波長nmあたりへ換算せず、不等間隔も補間しません。"]
     if temperature_options:

@@ -20,6 +20,8 @@ export interface DatasetSummary {
   rowCount: number; sheets: string[]; sheet: string | null; artificial: boolean;
   suggestedId: string | null; suggestedGroup: string | null;
   wavelengthColumns: {column: string; wavelength: number}[];
+  importNotes?: string[];
+  dataKind?: 'spectra' | 'unity-log' | 'table';
 }
 export interface CalibrationSummary extends DatasetSummary {
   sourceSha256: string;
