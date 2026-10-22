@@ -54,6 +54,11 @@ export function mergeAquap2Result(result: AnalysisResult, output: ROutput): Anal
   converted.metadata.execution = execution;
   converted.pca = structuredClone(checked.pca);
   converted.aquagram = {...structuredClone(checked.aquagram),labels:result.aquagram.labels,sdDdof:1};
+  // The current R bridge validates group means only. Do not label Python's
+  // per-sample coordinates (or unchecked response extras) as R output.
+  delete converted.aquagram.samples;
+  delete converted.exports['data/aquagram_sample_values.csv'];
+  delete converted.exports['aquagram_samples.json'];
   // No endpoint or connection token is included in saved results.
   const runtime = {...checked.runtime, stageExecution:execution};
   converted.exports['aquap2_runtime.json'] = JSON.stringify(runtime, null, 2);

@@ -1,0 +1,24 @@
+import {readFileSync} from 'node:fs';
+import {stripTypeScriptTypes} from 'node:module';
+import assert from 'node:assert/strict';
+const source=stripTypeScriptTypes(readFileSync(new URL('../src/aquagramModel.ts',import.meta.url),'utf8'));
+const {fitFormationModel}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const points=Array.from({length:61},(_,i)=>({time:1000+i*5,value:2+4.5*(1-Math.exp(-i*5/47))}));
+const fitted=fitFormationModel(points);
+assert(Math.abs(fitted.tau-47)<1e-4);assert(Math.abs(fitted.amplitude-4.5)<1e-6);assert.equal(fitted.baseline,2);
+assert(fitted.r2>1-1e-12);assert(fitted.rmse<1e-7);assert.equal(fitted.timeOrigin,1000);
+assert(Math.abs(fitted.curve[0].rate-4.5/47)<1e-7);
+const delayed=Array.from({length:41},(_,i)=>({time:i*3,value:1+7*(1-Math.exp(-Math.max(0,i*3-9)/22))}));
+const d=fitFormationModel(delayed,{delay:9,baseline:1});assert(Math.abs(d.tau-22)<1e-4);assert(Math.abs(d.amplitude-7)<1e-5);
+assert.equal(d.curve[0].rate,0);assert.equal(d.curve[0].value,1);
+const reversed=fitFormationModel([...points].reverse());assert(Math.abs(reversed.tau-fitted.tau)<1e-10);
+const dup=fitFormationModel([...points,...points]);assert.equal(dup.n,61);assert(dup.warnings.some(s=>s.includes('同一時刻')));
+const invalid=fitFormationModel([...points,{time:NaN,value:2}]);assert(invalid.warnings.some(s=>s.includes('非有限')));
+assert.throws(()=>fitFormationModel(points.slice(0,5)),/6点/);
+assert.throws(()=>fitFormationModel(points.map(p=>({...p,value:2}))),/変動/);
+assert.throws(()=>fitFormationModel(points,{delay:300}),/遅延/);
+assert.throws(()=>fitFormationModel(points.map((p,i)=>({...p,value:10-i}))),/単調増加/);
+const slow=fitFormationModel(points.map((p,i)=>({...p,value:2+i*.05})));assert(slow.warnings.some(s=>s.includes('識別')));
+const noisy=fitFormationModel(points.map((p,i)=>({...p,value:p.value+Math.sin(i)*2})));assert(Number.isFinite(noisy.r2));
+for(const p of fitted.curve){assert(p.rate>=0);assert(p.value>=fitted.baseline);}
+console.log('PASS: empirical Aquagram model analytic parameters/derivative, fixed delay, shifted time, duplicate means, invalid/flat/descending/weakly identified cases');

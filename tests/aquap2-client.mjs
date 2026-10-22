@@ -13,6 +13,15 @@ function check(name,test){try{test();passed++;}catch(e){console.error(name);thro
 check('only fixed local endpoints',()=>{assert.equal(validateEndpoint('http://localhost:8787/'),'http://localhost:8787');for(const url of ['https://remote.example','http://127.0.0.1:9000','http://localhost:8787/path','http://localhost:8787@evil.example'])assert.throws(()=>validateEndpoint(url));});
 check('source harness and malformed/reordered results are rejected',()=>{for(const mutate of [x=>x.runtime.packageApiExecuted=false,x=>x.runtime.api='source harness',x=>x.pca.ids.reverse(),x=>x.pca.scores[0][0]=NaN,x=>x.pca.explainedVariance=[1.2],x=>x.aquagram.groups[0].n=1,x=>x.aquagram.wavelengths.reverse()]){const bad=structuredClone(output);mutate(bad);assert.throws(()=>validateROutput(bad,baseline));}});
 check('actual-stage provenance replaces stale Python claims and keeps independent baseline',()=>{const merged=mergeAquap2Result(baseline,output);assert.equal(merged.metadata.execution.packageApiExecuted,true);assert.equal(merged.metadata.execution.preprocessingEngine,'python');assert.ok(merged.metadata.warnings.includes(output.warnings[0]));const settings=JSON.parse(merged.exports['settings.json']);assert.equal(settings._provenance.aquap2_not_executed,false);assert.match(settings._provenance.implementation,/installed aquap2/);assert.ok(!merged.exports['README.txt'].includes('aquap2は実行していません'));assert.equal(merged.exports['data/python_reference_aquagram.csv'],'python baseline\n');assert.equal(JSON.parse(merged.exports['aquap2_comparison.json']).maximumAbsoluteDifferenceAfterSdConversion,0);assert.equal(baseline.metadata.execution,undefined);assert.equal(baseline.exports['data/aquagram.csv'],'python baseline\n');});
+check('group-only R output cannot inherit Python or unchecked per-sample coordinates',()=>{
+  const python=structuredClone(baseline);python.aquagram.samples={ids,groups,values:[[1,2,3],[4,5,6],[7,8,9]],definition:'Python only'};
+  python.exports['data/aquagram_sample_values.csv']='Python per-sample values';python.exports['aquagram_samples.json']='{"engine":"python"}';
+  const r=structuredClone(output);r.aquagram.samples={definition:'unchecked server extra'};
+  const converted=mergeAquap2Result(python,r);
+  assert.equal(converted.aquagram.samples,undefined);
+  assert.equal(converted.exports['data/aquagram_sample_values.csv'],undefined);assert.equal(converted.exports['aquagram_samples.json'],undefined);
+  assert.equal(python.aquagram.samples.definition,'Python only');
+});
 await (async()=>{
   const original=globalThis.fetch;const calls=[];let pending=false;
   globalThis.fetch=async(url,options)=>{calls.push({url,options});if(pending)return new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError'))));const value=url.endsWith('/health')?{schemaVersion:1,available:true,engine:'aquap2',api:'aquap2::gdmm',aquap2Version:'0.4.5',rVersion:'R test',capabilities:{pca:true,classic:true}}:url.endsWith('/session')?{token:'private-'.repeat(8),expiresIn:1800}:output;return {ok:true,json:async()=>value};};

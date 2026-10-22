@@ -3,7 +3,7 @@ import type { AnalysisConfig, DatasetSummary, PLSConfig } from './types';
 export interface SettingsDocument {
   format: 'aquaphotomics-workbench-settings';
   schemaVersion: 1;
-  appVersion: '1.8';
+  appVersion: '1.9';
   createdAt: string;
   source: { name: string; sheet: string | null } | null;
   config: AnalysisConfig;
@@ -232,7 +232,7 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
 export function createSettingsDocument(config: AnalysisConfig, source: { name: string; sheet?: string | null } | null): SettingsDocument {
   safeTree(config); safeTree(source);
   return {
-    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.8',
+    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.9',
     createdAt: new Date().toISOString(), source: sourceMetadata(source), config: validateConfig(config, null),
   };
 }
@@ -246,7 +246,7 @@ export function parseSettingsDocument(textInput: string, summary: DatasetSummary
   let config: unknown = document;
   if (own(document, 'format')) {
     if (document.format !== 'aquaphotomics-workbench-settings') fail('この設定ファイルのformatには対応していません。');
-    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
+    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
     if (typeof document.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(document.createdAt) || !Number.isFinite(Date.parse(document.createdAt))) fail('設定の作成日時が不正です。');
     sourceMetadata(document.source);
     config = document.config;

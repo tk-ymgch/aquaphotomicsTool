@@ -257,6 +257,7 @@ def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration
         if np.any(denominator == 0) or not np.isfinite(denominator).all():
             raise ValueError("sfcの校正中心からの測定尺度が0または非有限です。")
         values = np.array([(centered / denominator)[mask].mean(axis=0) for mask in masks])
+        row_values = centered / denominator
         output_wavelengths = w[position].tolist()
         output_labels = [f"{v:g} nm" for v in output_wavelengths]
         ranges = None
@@ -278,15 +279,19 @@ def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration
         if np.any(difference == 0) or not np.isfinite(difference).all():
             raise ValueError("TCalib両端の校正AUC面積比が等しい帯があります。校正範囲を確認してください。")
         values = (means - minimum) * 100 / difference
+        row_values = (ratios - minimum) * 100 / difference
         if not mode.endswith("-diff") and ".tn" not in mode and np.any((values < 0) | (values > 100)):
             warnings.append("校正範囲に対するAUC%が0〜100%を外れています。値はclipせず、校正範囲と測定/校正条件を確認してください。")
         baseline = (experiment_auc - minimum) * 100 / difference
         if ".tn" in mode:
             values = values - baseline
+            row_values = row_values - baseline
         if ".dce" in mode:
             values = values * (limits[1] - limits[0]) / 100
+            row_values = row_values * (limits[1] - limits[0]) / 100
             if ".tn" not in mode:
                 values = values + limits[0]
+                row_values = row_values + limits[0]
         output_wavelengths = [float((a + b) / 2) for a, b in bands]
         output_labels = list(coordinates)
         ranges = [list(b) for b in bands]
@@ -307,6 +312,7 @@ def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration
             calibrationEndpointOnly=True, calibrationMinima=minimum.tolist(), calibrationMaxima=maximum.tolist(),
             temperatureBaselinePercent=baseline.tolist(), percentClipping=False)
     if mode.endswith("-diff"):
+        row_values = row_values - values[names.index(reference)]
         values = values - values[names.index(reference)]
         provenance["order"].append("subtract-control-group")
         definition += "指定対照群の値を減算。"
@@ -320,4 +326,6 @@ def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration
         "coordinateRanges": ranges, "coordinateSystem": calibration["coordinateSystem"],
         "groups": [{"name": name, "n": int(mask.sum()), "values": value.tolist()} for name, mask, value in zip(names, masks, values)],
         "reference": "対照群: " + reference if reference is not None else "校正基準",
-        "definition": definition, "mode": mode, "unit": unit, "provenance": provenance, "warnings": warnings}
+        "definition": definition, "mode": mode, "unit": unit, "provenance": provenance, "warnings": warnings,
+        "rowValues": _finite_result(row_values, "温度Aquagram試料値").tolist(),
+        "rowDefinition": "群平均前の各試料へ同じ平滑化・校正座標・固定校正尺度を適用。diffは同じ指定対照群の換算平均を減算。再生フレームごとの再校正・標準化は行いません。℃相当値は測定温度の推定ではありません。"}

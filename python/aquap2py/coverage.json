@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "implementation": {
     "name": "aquap2py",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "unofficial": true
   },
   "reference": {

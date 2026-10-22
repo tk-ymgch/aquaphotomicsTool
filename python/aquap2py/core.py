@@ -9,7 +9,7 @@ import numpy as np
 from .preprocessing import _finite_result, _int, _matrix, preprocess_spectra, sgolay
 
 REFERENCE_COMMIT = "d31c1231bf71f0e73f1a630a32934602782be488"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 
 def _vector(value: Any, size: int, label: str) -> np.ndarray:
@@ -112,7 +112,11 @@ def classic_aquagram(matrix: Any, wavelengths: Any, groups: Any, targets: Any,
         standardized = _finite_result((selected - selected.mean(axis=0)) / std, "Aquagram標準化")
     masks = [np.asarray(labels) == group for group in names]
     values = np.array([standardized[mask].mean(axis=0) for mask in masks])
+    # Retain the exact per-observation transform for exploration. The original
+    # group calculation stays unchanged, including its rounding order.
+    row_values = standardized.copy()
     if control is not None:
+        row_values = row_values - values[names.index(control)]
         values = values - values[names.index(control)]
     _finite_result(values, "Aquagram群平均")
     actual = w[positions].tolist()
@@ -121,7 +125,9 @@ def classic_aquagram(matrix: Any, wavelengths: Any, groups: Any, targets: Any,
     return {"wavelengths": actual, "labels": [f"{v:g} nm" for v in actual],
             "groups": [{"name": name, "values": value.tolist(), "n": int(mask.sum())}
                        for name, value, mask in zip(names, values, masks)],
-            "reference": label, "definition": definition, "mode": mode, "ddof": 1}
+            "reference": label, "definition": definition, "mode": mode, "ddof": 1,
+            "rowValues": _finite_result(row_values, "Aquagram試料値").tolist(),
+            "rowDefinition": "群平均前の各試料へ、全入力試料を固定基準とするclassic標準化を適用。classic-diffは同じ指定対照群の標準化平均を減算。再生フレームごとの再標準化は行いません。"}
 
 
 def gdmm(dataset: SpectralData, *, steps: list[dict] | None = None, components: int = 5,

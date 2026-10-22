@@ -1,6 +1,6 @@
 # Cloudflare Pagesへの配布
 
-v1.6.1で移行した認証付きModule WorkerをPages advanced modeの`_worker.js`として引き続き配布します。v1.8.0ではUIの基調を維持し、実験フェーズCSVとUnityログのブラウザー内比較を追加しました。aquap2pyは0.3.0を維持します。設定schema1を維持し、旧設定の読込にも対応します。
+v1.6.1で移行した認証付きModule WorkerをPages advanced modeの`_worker.js`として引き続き配布します。v1.9.0ではUIの基調を維持し、試料別Aquagramの時系列・全画面探索を追加しました。aquap2pyは0.3.1です。設定schema1を維持し、旧設定の読込にも対応します。
 
 ## ビルドと検証
 

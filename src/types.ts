@@ -84,7 +84,7 @@ export interface AnalysisResult {
   metadata: {samples: number; variables: number; groups: string[]; range: [number, number]; warnings: string[]; settings: AnalysisConfig; execution?: ExecutionRecord; compatibilityReport?: CompatibilityReport};
   spectra: {wavelengths: number[]; raw: number[][]; processed: number[][]; ids: string[]; groups: string[]};
   pca: {scores: number[][]; loadings: number[][]; explainedVariance: number[]; ids: string[]; groups: string[]};
-  aquagram: {wavelengths: number[]; labels: string[]; groups: {name: string; values: number[]; n: number}[]; reference: string; definition: string; sdDdof?: number | null; mode?: string; unit?: string; coordinateRanges?: number[][]; provenance?: Record<string, unknown>};
+  aquagram: {wavelengths: number[]; labels: string[]; groups: {name: string; values: number[]; n: number}[]; reference: string; definition: string; sdDdof?: number | null; mode?: string; unit?: string; coordinateRanges?: number[][]; provenance?: Record<string, unknown>; samples?: {ids: string[]; groups: string[]; values: number[][]; definition: string; metadata?: Record<string, (string | number | null)[]>}};
   exports: Record<string, string>;
   pls?: PLSResult;
   nativePlsr?: NativePLSRResult;

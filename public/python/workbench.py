@@ -9,7 +9,7 @@ import csv
 import io
 import json
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -24,6 +24,7 @@ ARTIFICIAL = "人工データ（実測値ではありません）"
 GLOBAL_REFERENCE = "global"
 MAX_PLS_ELEMENTS = 100_000
 MAX_PLS_WORK = 250_000_000
+AQUAGRAM_METADATA_COLUMNS = 64
 AQUAGRAM_DEFINITION = (
     "前処理後の指定波長における（群平均 − 基準平均）÷ 全試料の標準偏差（ddof=0）。"
     "基準は全体平均または選択した対照群平均です。標準偏差が0の波長の値は0とします。"
@@ -705,6 +706,79 @@ def _analyze_pls(df: pd.DataFrame, settings: dict, requested: dict, columns: lis
     return result, applied, exports
 
 
+def _aquagram_metadata_scalar(value: Any) -> str | int | float | None:
+    """A bounded-column metadata view, without inventing labels or timestamps."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if value is None or value is pd.NA or value is pd.NaT:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        # Preserve large integer identifiers across JavaScript's number parser.
+        return value if abs(value) <= 9_007_199_254_740_991 else str(value)
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return None
+
+
+def _attach_aquagram_samples(df: pd.DataFrame, result: dict, values: Any, definition: str) -> None:
+    """Add fixed-transform per-row coordinates and replayable metadata exports.
+
+    All non-wavelength columns are eligible, with a maximum of 64. Configured
+    ID/group and experiment provenance are retained first; remaining columns
+    follow input order. No participant names or physical clock are inferred.
+    """
+    aq, spectra = result["aquagram"], result["spectra"]
+    matrix = np.asarray(values, dtype=float)
+    if matrix.shape != (len(spectra["ids"]), len(aq["labels"])) or not np.isfinite(matrix).all():
+        raise ValueError("Aquagramの試料値・座標・試料数が一致しません。")
+    if len(df) != len(matrix):
+        raise ValueError("Aquagramの試料メタデータの行数が一致しません。")
+    candidates = [column for column in df.columns if parse_wavelength(str(column)) is None]
+    settings = result["metadata"]["settings"]
+    first = [settings.get("idColumn"), settings.get("groupColumn")]
+    first += [column for column in candidates if str(column).startswith("experiment_")]
+    ordered = list(dict.fromkeys(column for column in [*first, *candidates] if column in candidates))
+    columns = ordered[:AQUAGRAM_METADATA_COLUMNS]
+    samples = {"ids": list(spectra["ids"]), "groups": list(spectra["groups"]),
+               "values": matrix.tolist(), "definition": definition,
+               "metadata": {str(column): [_aquagram_metadata_scalar(value) for value in df[column]]
+                            for column in columns}}
+    aq["samples"] = samples
+    table = pd.DataFrame(matrix, columns=[f"coordinate_{i + 1}" for i in range(matrix.shape[1])])
+    table.insert(0, "group", samples["groups"])
+    table.insert(0, "sample_id", samples["ids"])
+    result["exports"]["data/aquagram_sample_values.csv"] = _csv(table)
+    result["exports"]["aquagram_samples.json"] = json.dumps({
+        "schemaVersion": 1, "kind": "aquagram-per-sample-fixed-transform",
+        "wavelengths": aq["wavelengths"], "labels": aq["labels"],
+        "coordinateRanges": aq.get("coordinateRanges"), "mode": aq.get("mode"),
+        "unit": aq.get("unit"), "reference": aq["reference"], "definition": aq["definition"],
+        "sdDdof": aq.get("sdDdof", aq.get("ddof", 0 if settings.get("aquagramReference") != "none" else None)),
+        "execution": result["metadata"].get("execution"), "provenance": aq.get("provenance"),
+        "rowOrder": "Identical to spectra.ids; CSV order is not assumed to be chronological.",
+        "metadataPolicy": {"maximumColumns": AQUAGRAM_METADATA_COLUMNS,
+            "priority": "configured ID/group, experiment_ provenance, then original input order",
+            "eligibleColumns": len(candidates), "omittedColumns": len(ordered) - len(columns),
+            "unsupportedOrNonfiniteValues": "null", "booleanValues": "string",
+            "largeIntegerValues": "string outside JavaScript safe integer range",
+            "datetimeValues": "ISO string; no timezone inferred"},
+        "csvColumns": ["sample_id", "group", *[f"coordinate_{i + 1}" for i in range(matrix.shape[1])]],
+        "samples": samples,
+    }, ensure_ascii=False, indent=2, allow_nan=False)
+    result["exports"]["README.txt"] += (
+        "\ndata/aquagram_sample_values.csvは試料順の座標値です。coordinate_1以降と実波長・帯域、固定基準・尺度、"
+        "メタデータ列の対応はaquagram_samples.jsonに記録します。\n"
+        "可視化で試料を選択しても全入力に適用した基準・尺度は再計算しません。メタデータは非波長列を最大64列まで保持し、"
+        "ID・群・experiment_来歴列を優先します。時刻・参加者の推定は行いません。\n"
+    )
+
+
 def analyze(df: pd.DataFrame, config: dict, *, calibration: pd.DataFrame | None = None) -> dict:
     """Apply a validated pipeline and return data, plots' arrays and text exports.
 
@@ -1009,6 +1083,13 @@ def analyze(df: pd.DataFrame, config: dict, *, calibration: pd.DataFrame | None 
             "README.txt": readme,
         },
     }
+    row_values = aq_x.copy()
+    if reference != "none":
+        row_values = (row_values - reference_mean) / denominator
+        row_values[:, aq_constant] = 0.0
+    _attach_aquagram_samples(df, result, row_values,
+        "前処理後の各試料へ、群平均Aquagramと同じ指定波長・全入力の固定基準平均・母SD(ddof=0)を適用。"
+        "基準なしは前処理後の試料値を保持。SDが0の座標は0。再生フレームごとの再標準化は行いません。")
     pls_option = config.get("pls")
     if pls_option is not None:
         if not isinstance(pls_option, dict) or not isinstance(pls_option.get("enabled"), bool):
@@ -1279,6 +1360,8 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
         "aquap2py/NOTICE.md": importlib.resources.files("aquap2py").joinpath("NOTICE.md").read_text(encoding="utf-8"),
         "aquap2py/LICENSE": importlib.resources.files("aquap2py").joinpath("LICENSE").read_text(encoding="utf-8"),
     })
+    _attach_aquagram_samples(df, result, result["aquagram"].pop("rowValues"),
+                             result["aquagram"].pop("rowDefinition"))
     if calibration_model is not None:
         result["exports"]["data/calibration_input.csv"] = calibration.to_csv(index=False)
         result["exports"]["temperature_calibration.json"] = json.dumps(calibration_model,ensure_ascii=False,indent=2,allow_nan=False)

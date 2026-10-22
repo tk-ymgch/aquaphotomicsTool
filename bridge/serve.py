@@ -172,6 +172,8 @@ class Handler(BaseHTTPRequestHandler):
         pass  # Request bodies, IDs, paths and bearer values are never logged.
 
     def reply(self, status, value=None):
+        if self.command == 'POST' and status >= 400:
+            self.discard_bounded_body()
         data = b'' if value is None else json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
         self.send_response(status)
         origin = self.headers.get('Origin')
@@ -230,6 +232,7 @@ class Handler(BaseHTTPRequestHandler):
             raise InputError('送信データは8 MiB以下にしてください。')
         self.connection.settimeout(15)
         body = self.rfile.read(length)
+        self._body_consumed = True
         # Drain this bounded body before rejecting its media type. Closing a
         # Windows socket with unread request bytes can reset it before the
         # client receives the intended HTTP 400 response.
@@ -243,6 +246,28 @@ class Handler(BaseHTTPRequestHandler):
         with self.server.session_lock:
             self.server.sessions = {key: expiry for key, expiry in self.server.sessions.items() if expiry > now}
             return any(hmac.compare_digest(token, 'Bearer ' + key) for key in self.server.sessions)
+
+    def discard_bounded_body(self):
+        """Avoid a TCP reset swallowing a rejected POST's HTTP status on Windows.
+
+        Only a declared, bounded body is read; it is neither parsed nor passed
+        to the analysis runtime. Origin/auth rejection remains unchanged.
+        """
+        if getattr(self, '_body_consumed', False):
+            return
+        self._body_consumed = True
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if self.headers.get('Transfer-Encoding') or not 0 <= length <= MAX_BODY:
+                return
+            self.connection.settimeout(2)
+            while length:
+                chunk = self.rfile.read(min(length, 65536))
+                if not chunk:
+                    return
+                length -= len(chunk)
+        except (OSError, ValueError):
+            pass
 
     def do_POST(self):
         if not self.permitted():
@@ -263,6 +288,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path != '/analyze':
                 return self.reply(404, {'error': 'Not found'})
             if not self.authenticated():
+                self.discard_bounded_body()
                 return self.reply(401, {'error': 'R接続の有効期限が切れました。接続テストから再接続してください。'})
             result = self.server.runtime.analyze(validate_job(self.read_json()))
             self.reply(200, result)
