@@ -20,6 +20,7 @@ MAX_BODY = 8 * 1024 * 1024
 SESSION_SECONDS = 30 * 60
 ORIGINS = frozenset({
     'https://aquaphotomics-workbench.tkymgch.chatgpt.site',
+    'https://aquaphotomics-workbench.pages.dev',
     'http://127.0.0.1:4173', 'http://127.0.0.1:4174', 'http://127.0.0.1:5173',
 })
 

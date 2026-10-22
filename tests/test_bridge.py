@@ -14,6 +14,7 @@ spec = importlib.util.spec_from_file_location('aqua_bridge', Path(__file__).reso
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 ORIGIN = 'https://aquaphotomics-workbench.tkymgch.chatgpt.site'
+PAGES_ORIGIN = 'https://aquaphotomics-workbench.pages.dev'
 JOB = {'schemaVersion':1, 'matrix':[[1,2,4],[2,1,3],[3,4,2]], 'wavelengths':[1300,1400,1500],
        'ids':['001','002','003'], 'groups':['群 A','対照','群 A'],
        'aquagram':{'wavelengths':[1300,1400,1500],'reference':'global'},'pca':{'components':2,'scale':False}}
@@ -62,6 +63,42 @@ def test_preflight_allows_only_the_expected_protocol(service):
     assert status==204 and h['Access-Control-Allow-Origin']==ORIGIN and h['Access-Control-Allow-Private-Network']=='true'
     assert call('/analyze',method='OPTIONS',headers={'Access-Control-Request-Method':'DELETE'})[0]==403
     assert call('/analyze',method='OPTIONS',headers={'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'x-code'})[0]==403
+
+
+@pytest.mark.parametrize('origin', [ORIGIN, PAGES_ORIGIN])
+def test_published_origins_support_preflight_session_and_analysis(service, origin):
+    _,runtime,call=service
+    headers={'Origin':origin}
+    status,h,health=call('/health',headers=headers)
+    assert status==200 and h['Access-Control-Allow-Origin']==origin
+    assert health['engine']=='aquap2'
+    status,h,_=call('/analyze',method='OPTIONS',headers={**headers,
+        'Access-Control-Request-Method':'POST',
+        'Access-Control-Request-Headers':'content-type,authorization,x-aquaphotomics-client'})
+    assert status==204 and h['Access-Control-Allow-Origin']==origin
+    assert h['Access-Control-Allow-Private-Network']=='true'
+    status,h,session=call('/session',{'client':'aquaphotomics-workbench'},headers)
+    assert status==200 and h['Access-Control-Allow-Origin']==origin
+    status,h,result=call('/analyze',JOB,{**headers,'Authorization':'Bearer '+session['token']})
+    assert status==200 and h['Access-Control-Allow-Origin']==origin
+    assert result=={'accepted':True} and runtime.jobs==[JOB]
+
+
+@pytest.mark.parametrize('origin', [
+    'https://unrelated-project.pages.dev',
+    'https://preview.aquaphotomics-workbench.pages.dev',
+    'https://aquaphotomics-workbench.pages.dev.evil.example',
+])
+def test_other_pages_origins_cannot_connect_or_create_sessions(service, origin):
+    server,runtime,call=service
+    headers={'Origin':origin}
+    requests=[('/health',None,None),
+              ('/session',{'client':'aquaphotomics-workbench'},None),
+              ('/analyze',None,'OPTIONS')]
+    for path,body,method in requests:
+        status,h,_=call(path,body,headers,method)
+        assert status==403 and 'Access-Control-Allow-Origin' not in h
+    assert server.sessions=={} and runtime.jobs==[]
 
 
 def test_session_expiry_and_no_auth_analysis(service):

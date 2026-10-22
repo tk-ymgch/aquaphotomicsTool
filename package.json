@@ -11,6 +11,7 @@
     "sync:python": "node scripts/sync-python.mjs",
     "dev": "node scripts/sync-python.mjs && vite --host 127.0.0.1",
     "build": "node scripts/sync-python.mjs && tsc -b && vite build --outDir .client-build && node scripts/build-worker.mjs",
+    "build:pages": "pnpm build && node scripts/build-pages.mjs",
     "typecheck": "tsc -b",
     "preview": "vite preview --outDir .client-build --host 127.0.0.1"
   },
