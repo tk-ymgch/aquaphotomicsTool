@@ -1,4 +1,21 @@
-# aquap2との比較定義・実行範囲・検証履歴（v1.4）
+# aquap2との比較定義・実行範囲・検証履歴
+
+## v1.7.0 / aquap2py 0.3.0の追加照合
+
+現在の通常解析はブラウザー内のPython部分移植です。参照は引き続き固定aquap2 0.4.5 / `d31c1231bf71f0e73f1a630a32934602782be488`。下のv1.4経路と違い、開発用oracleは**同じ生の人工入力**から正式R公開APIで前処理・校正・PLSRを実行します。利用者の各解析をRで再実行する機能ではありません。
+
+| 追加・再照合 | 正本と比較件数 | 主な区別 |
+| --- | --- | --- |
+| SG/SNV/MSC→PCA/classic | [12条件・60チェック](../qa/v1.7-classic-release-verification.json) | native前処理そのものを本体へ照合。SD換算不要 |
+| detrend/EMSC/gapDer/resample | [35条件・26,109値](../qa/v1.7-preprocessing-verification.json) | matrix/波長の数値binding。R S4/exportModel全互換ではない |
+| 温度AQのLOESS | [86条件・3,438値](../qa/v1.7-temperature-final-verification.json) | 観測shortcut、mixed端点、R-defaultのrobust quadratic/default-interpolate。外挿・8未満・特異近傍は停止 |
+| PLSR既存経路＋外れ値 | [既存13条件](../qa/v1.7-plsr-original-release-verification.json)・[外れ値8条件](../qa/v1.7-plsr-outlier-release-verification.json)、合計713チェック・47,148値 | LOO/群CV、保持maskと1回の除外/再学習。全X前処理後CVで、外側nested性能評価とは異なる |
+
+温度の最大絶対差2.8113e-7は事前のatol1e-8/rtol1e-7内（最大許容幅比0.02638）、PLSRは7.7074e-10でatol/rtol各1e-8内です。追加前処理はmatrix最大1.9437e-13・波長最大2.2737e-13でした。[詳細と除外](VALIDATION.md)、[機能/API対応表](AQUAP2PY_COVERAGE.md)を参照してください。完全対応はfalseです。
+
+UIでは全範囲detrend、限定温度LOESS、PLSR外れ値を利用できます。EMSC/gapDer/resampleと範囲指定detrendはPython APIのみです。上流で複数Yを指定する場合も各応答の独立PLS1で、同時PLS2ではありません。数値の条件限定一致を、全API/metadata/装置IO/描画や実測試料の科学的妥当性の確認へ拡張しません。
+
+## v1.4の比較定義と履歴（以下）
 
 更新日: 2026-10-22。v1.4は、共通のPython前処理後の行列をインストール済みaquap2本体の公開API `aquap2::gdmm` へ渡す実行経路を追加しました。この文書では計算定義、現在の実行範囲、v1.3の限定source harnessを区別します。標準・旧Python互換の各6条件、合計12条件を本体APIと比較した数値を下記へ記録しています。実測データ、温度校正、AUCモードの数値一致を確認したものではありません。
 

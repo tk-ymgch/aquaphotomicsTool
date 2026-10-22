@@ -204,22 +204,120 @@ def _json(value: Any) -> Any:
     return value
 
 
+def _outlier_range(value: Any) -> float:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)) or not np.isfinite(value) or value < 0:
+        raise ValueError("PLSR外れ値検出rangeは0以上の有限数にしてください。")
+    return float(value)
+
+
+def plsr_outlier_indices(result: dict, *, detection_range: float = .5) -> dict:
+    """aquap2's public pls_outlier_getIndices rule for one fitted PLS1 model.
+
+    CV predictions are grouped by equal observed Y, not by spectral/CV group.
+    R boxplot uses Tukey hinges (fivenum), not interpolated 25/75% quantiles.
+    The upstream outInd is an *inlier/keep* mask despite its name. This helper
+    does not refit or remove rows. Unique observed Y normally gives no outliers.
+    """
+    coefficient = _outlier_range(detection_range)
+    if not isinstance(result, dict) or not isinstance(result.get("model"), dict):
+        raise ValueError("外れ値判定にはplsrのモデル付き結果を指定してください。")
+    model = result["model"]
+    try:
+        components = _int(model["ncomp"], "PLSRモデル成分数", 1, MAX_COMPONENTS)
+        predictions = np.asarray(model["validation"]["pred"], dtype=float)
+        observed = np.asarray(result["observed"], dtype=float)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("PLSRの目的値・CV予測・成分数の記録が不正です。") from exc
+    if predictions.ndim != 2 or observed.ndim != 1 or predictions.shape != (len(observed), components) or not len(observed) or not np.isfinite(predictions).all() or not np.isfinite(observed).all():
+        raise ValueError("PLSRの目的値とCV予測の形状・有限値を確認してください。")
+    values = predictions[:, components - 1]
+    excluded = np.zeros(len(observed), dtype=bool)
+    group_records = []
+    for target in np.unique(observed):
+        indices = np.flatnonzero(observed == target)
+        ordered = np.sort(values[indices])
+        n = len(ordered)
+        # R stats::fivenum's 1-based order statistic locations.
+        n4 = np.floor((n + 3) / 2) / 2
+        def midpoint(location):
+            return float((ordered[int(np.floor(location)) - 1] + ordered[int(np.ceil(location)) - 1]) / 2)
+        lower, upper = midpoint(n4), midpoint(n + 1 - n4)
+        spread = upper - lower
+        low_fence, high_fence = lower - coefficient * spread, upper + coefficient * spread
+        if not np.isfinite([low_fence, high_fence]).all():
+            raise ValueError("PLSR外れ値判定のフェンスが数値範囲を超えました。")
+        flags = ((values[indices] < low_fence) | (values[indices] > high_fence)) if coefficient > 0 else np.zeros(n, dtype=bool)
+        excluded[indices[flags]] = True
+        group_records.append({"observed": float(target), "n": n, "lowerHinge": lower, "upperHinge": upper,
+            "lowerFence": float(low_fence), "upperFence": float(high_fence), "excludedIndices": indices[flags].tolist()})
+    return {"schemaVersion": 1, "detectionRange": coefficient, "outInd": (~excluded).tolist(),
+        "keepMask": (~excluded).tolist(), "excludedMask": excluded.tolist(),
+        "retainedIndices": np.flatnonzero(~excluded).tolist(), "excludedIndices": np.flatnonzero(excluded).tolist(),
+        "groupsByObservedY": group_records, "definition": "選択成分のCV予測を実測Yの同値群ごとにTukey hingesの箱ひげ判定。outInd=trueは保持行。range=0は除外なし。",
+        "provenance": {"referencePackage": "aquap2", "referenceVersion": "0.4.5", "referenceCommit": REFERENCE_COMMIT,
+            "publicApi": "aquap2::pls_outlier_getIndices", "rExecuted": False,
+            "grouping": "equal-observed-Y-not-CV-groups", "quartiles": "R-fivenum-Tukey-hinges",
+            "indexBase": 0, "completeCompatibility": False}}
+
+
 def plsr(matrix: Any, y: Any, *, ncomp: int | None = None, validation: str | int = "LOO",
          cv_groups: Any = None, sample_ids: Any = None, iterations: int = 7,
          seed: int = 0, segments_schedule: Any = None, max_selection_batches: int = 100,
+         exclude_outliers: bool = False, outlier_range: float = .5,
          **unsupported) -> dict:
     """Native-style PLS1; LOO/group are deterministic, random CV uses NumPy RNG.
 
     A replay schedule is a list of segment partitions, one per selection trial
     followed by the final model partition. Fixed ncomp consumes only one. This
     permits conditional same-fold oracle comparison without claiming R RNG parity.
-    Missing values, rank-excess components and PLS-specific outlier removal are
-    deliberately rejected. Input is already in the processed X variable space.
+    Optional PLS-specific outlier exclusion performs exactly one detection pass
+    and one refit, only for deterministic LOO/group partitions. DPT is not
+    repeated or refitted after filtering. Missing values and rank-excess
+    components are rejected. Input is already in the processed X variable space.
     """
     if unsupported:
         raise ValueError("未対応のPLSR引数です: " + ", ".join(sorted(unsupported)))
     x = _matrix(matrix, min_rows=4)
     observed = _y_vector(y, len(x)); n, p = x.shape
+    if not isinstance(exclude_outliers, (bool, np.bool_)):
+        raise ValueError("PLSR外れ値除外の有効設定はtrue/falseにしてください。")
+    detection_range = _outlier_range(outlier_range)
+    if exclude_outliers:
+        if validation not in ("LOO", "group") or segments_schedule is not None:
+            raise ValueError("PLSR外れ値除外はLOO・群CVのみ対応し、乱数CV・分割scheduleとの併用は未対応です。")
+        options = dict(ncomp=ncomp, validation=validation, cv_groups=cv_groups, sample_ids=sample_ids,
+            iterations=iterations, seed=seed, max_selection_batches=max_selection_batches)
+        initial = plsr(x, observed, **options)
+        diagnostic = plsr_outlier_indices(initial, detection_range=detection_range)
+        retained = diagnostic["retainedIndices"]
+        if len(retained) < 4:
+            raise ValueError("PLSR外れ値除外後に4試料以上が必要です。")
+        options["cv_groups"] = [cv_groups[i] for i in retained] if cv_groups is not None else None
+        options["sample_ids"] = [sample_ids[i] for i in retained] if sample_ids is not None else None
+        if validation == "group":
+            # Subsetting an R factor retains its original level order even if
+            # the first observed row of a level was removed. Preserve that
+            # order instead of rediscovering levels from the remaining rows.
+            levels = list(dict.fromkeys(_labels(cv_groups, n, "CV群")))
+            kept_groups = _labels(options["cv_groups"], len(retained), "CV群")
+            partition = [np.flatnonzero(np.array(kept_groups) == level).tolist() for level in levels]
+            if any(not segment for segment in partition):
+                raise ValueError("PLSR外れ値除外でCV群全体がなくなりました。この因子水準の保持条件は未対応です。")
+            repeats = max(2, iterations) + 1 if ncomp is None else 1
+            options["segments_schedule"] = [partition for _ in range(repeats)]
+        filtered = plsr(x[retained], observed[retained], **options)
+        filtered["outlierFiltering"] = {**diagnostic, "enabled": True, "inputRows": n, "retainedRows": len(retained),
+            "initialSelectedComponents": initial["selectedComponents"], "initialObserved": observed.tolist(),
+            "initialPredictedCV": initial["predictedCV"], "passes": 1, "refitted": True,
+            "preprocessingRefitted": False, "scope": "LOO/group-only; one native pass; full-X-DPT-before-exclusion"}
+        filtered["retainedIndices"] = retained
+        filtered["excludedIndices"] = diagnostic["excludedIndices"]
+        filtered["settings"].update(excludeOutliers=True, outlierRange=detection_range)
+        filtered["provenance"].update(outlierRemoval=True, originalInputRows=n, retainedRows=len(retained),
+            rowMapping="outlierFiltering.retainedIndices-original-zero-based", outlierDetection="CV-prediction-by-observed-Y-Tukey-hinges-one-pass",
+            rng="deterministic", cvGroupOrder="original-factor-level-order" if validation == "group" else "original-row-order")
+        filtered["warnings"].append("PLSR固有外れ値除外を1回行って再校正しました。出力の試料順はretainedIndicesで元の行へ対応します。前処理は除外後に再fitしていません。")
+        return filtered
     if n > MAX_FOLDS:
         raise ValueError("native PLSRの試料数は1000以下にしてください。")
     iterations = _int(iterations, "PLSR選択反復数", 1, 21)
@@ -365,6 +463,7 @@ def plsr(matrix: Any, y: Any, *, ncomp: int | None = None, validation: str | int
     if random and schedule is None:
         warnings.append("乱数CVはNumPy PCG64を使用します。同じseedのR分割との一致は保証しません。")
     return _json({"schemaVersion": 1, "algorithm": "kernelpls", "selectedComponents": actual,
+                  "retainedIndices": list(range(n)), "excludedIndices": [],
                   "observed": observed, "predictedCV": model["validation"]["pred"][:, -1],
                   "predictedCalibration": model["fitted"][:, -1],
                   "residuals": observed - model["validation"]["pred"][:, -1], "fold": folds,

@@ -3,7 +3,7 @@ import type { AnalysisConfig, DatasetSummary, PLSConfig } from './types';
 export interface SettingsDocument {
   format: 'aquaphotomics-workbench-settings';
   schemaVersion: 1;
-  appVersion: '1.6';
+  appVersion: '1.7';
   createdAt: string;
   source: { name: string; sheet: string | null } | null;
   config: AnalysisConfig;
@@ -211,12 +211,19 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
       components:plsr.components === null ? null : integer(plsr.components,'PLSR成分数',1,30),
       validation:choice(plsr.validation,['LOO','group'],'aquap2方式PLSRのCV方式'),
       cvGroupColumn:column(plsr.cvGroupColumn,'PLSRのCV群列',columns),
+      ...(plsr.excludeOutliers === undefined ? {} : {excludeOutliers:boolean(plsr.excludeOutliers,'PLSR外れ値除外')}),
+      ...(plsr.outlierRange === undefined ? {} : {outlierRange:number(plsr.outlierRange,'PLSR外れ値範囲',0,10)}),
     };
     if (value.enabled && value.targetColumn === null) fail('aquap2方式PLSRの目的変数を指定してください。');
     if (value.enabled && (selected.includes(value.targetColumn!) || value.targetColumn === idColumn || value.targetColumn === value.cvGroupColumn)) fail('aquap2方式PLSRの目的変数を波長列・試料ID・CV群列と分けてください。');
     if (value.enabled && value.validation === 'group' && value.cvGroupColumn === null) fail('PLSRのCV群列を指定してください。');
     if (value.enabled && value.validation === 'group' && selected.includes(value.cvGroupColumn!)) fail('PLSRのCV群列を波長列と分けてください。');
     config.nativePlsr = value;
+  }
+  if (input.nativePreprocessing !== undefined) {
+    const extra = record(input.nativePreprocessing, '追加前処理');
+    config.nativePreprocessing = {detrend:boolean(extra.detrend, '直線detrend')};
+    if (config.nativePreprocessing.detrend && analysisEngine !== 'aquap2py') fail('追加の直線detrendはaquap2pyを選択してください。');
   }
   return config;
 }
@@ -225,7 +232,7 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
 export function createSettingsDocument(config: AnalysisConfig, source: { name: string; sheet?: string | null } | null): SettingsDocument {
   safeTree(config); safeTree(source);
   return {
-    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.6',
+    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.7',
     createdAt: new Date().toISOString(), source: sourceMetadata(source), config: validateConfig(config, null),
   };
 }
@@ -239,7 +246,7 @@ export function parseSettingsDocument(textInput: string, summary: DatasetSummary
   let config: unknown = document;
   if (own(document, 'format')) {
     if (document.format !== 'aquaphotomics-workbench-settings') fail('この設定ファイルのformatには対応していません。');
-    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4', '1.5', '1.6'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
+    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4', '1.5', '1.6', '1.7'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
     if (typeof document.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(document.createdAt) || !Number.isFinite(Date.parse(document.createdAt))) fail('設定の作成日時が不正です。');
     sourceMetadata(document.source);
     config = document.config;

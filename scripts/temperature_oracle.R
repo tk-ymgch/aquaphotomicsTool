@@ -32,8 +32,9 @@ run <- function(input) {
   settings <- file.path(job, "settings"); dir.create(settings, showWarnings = FALSE)
   # R_USER must have been isolated by the launcher before process startup.
   home <- normalizePath(path.expand("~"), winslash = "/", mustWork = TRUE)
-  qa_prefix <- paste0(normalizePath(file.path(project, "qa"), winslash = "/", mustWork = TRUE), "/v1.6-temperature-")
-  if (!startsWith(tolower(home), tolower(qa_prefix))) stop("Use an isolated qa/v1.6-temperature-* R_USER before R starts.")
+  qa_root <- normalizePath(file.path(project, "qa"), winslash = "/", mustWork = TRUE)
+  qa_prefixes <- paste0(qa_root, c("/v1.6-temperature-", "/v1.7-temperature-"))
+  if (!any(vapply(qa_prefixes, function(prefix) startsWith(tolower(home), tolower(prefix)), logical(1)))) stop("Use an isolated qa/v1.6-temperature-* or qa/v1.7-temperature-* R_USER before R starts.")
   Sys.setenv(AQUAP2SH = settings)
   writeLines(paste0("AQUAP2SH = ", settings), file.path(home, ".Renviron"), useBytes = TRUE)
   config <- input$config

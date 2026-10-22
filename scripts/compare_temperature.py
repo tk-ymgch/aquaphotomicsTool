@@ -76,8 +76,9 @@ def main():
     parser.add_argument("--r-runtime",type=Path,default=ROOT/"qa/aquap2-runtime-v1.4")
     parser.add_argument("--r-library",type=Path)
     parser.add_argument("--r-engine",type=Path,default=ROOT/"scripts/temperature_oracle.R")
-    parser.add_argument("--output",type=Path,default=ROOT/"qa/v1.6-temperature-oracle-verified")
-    parser.add_argument("--report",type=Path,default=ROOT/"qa/v1.6-temperature-verification.json")
+    parser.add_argument("--output",type=Path,default=ROOT/"qa/v1.7-temperature-oracle-verified")
+    parser.add_argument("--report",type=Path,default=ROOT/"qa/v1.7-temperature-verification.json")
+    parser.add_argument("--profile",choices=("observed","loess","all"),default="all")
     parser.add_argument("--timeout",type=float,default=90)
     parser.add_argument("--atol",type=float,default=1e-8)
     parser.add_argument("--rtol",type=float,default=1e-7)
@@ -86,7 +87,7 @@ def main():
     args.r_runtime=args.r_runtime.resolve();args.r_engine=args.r_engine.resolve()
     args.output=args.output.resolve();args.report=args.report.resolve()
     if args.r_library:args.r_library=args.r_library.resolve()
-    if not str(args.output).startswith(str(ROOT/"qa/v1.6-temperature-")):raise SystemExit("Output must be in qa/v1.6-temperature-*.")
+    if not args.output.is_relative_to(ROOT/"qa") or not args.output.name.startswith(("v1.6-temperature-","v1.7-temperature-")):raise SystemExit("Output must be in qa/v1.6-temperature-* or qa/v1.7-temperature-*.")
     args.output.mkdir(parents=True,exist_ok=False)
     x,w,groups,cal,temp=fixture()
     base={"schemaVersion":1,"matrix":x.tolist(),"wavelengths":w.tolist(),"groups":groups,
@@ -95,26 +96,48 @@ def main():
     report={"schemaVersion":1,"passed":False,"artificial":True,"sourceHarnessUsed":False,"aquap2pyVersion":VERSION,
             "reference":{"version":"0.4.5","commit":"d31c1231bf71f0e73f1a630a32934602782be488"},
             "pythonSourceSha256":digest(ROOT/"python/aquap2py/temperature.py"),"rOracleSha256":digest(args.r_engine),
-            "pythonDependencySourceSha256":{name:digest(ROOT/"python/aquap2py"/name) for name in ("core.py","preprocessing.py")},
-            "scope":"All 10 non-classic modes, two fixed coordinate systems, observed endpoints/Texp only; curated artificial calibration, no random balancing/bootstrap.",
-            "excluded":["unobserved-temperature robust LOESS","full R defaults/metadata/outlier-detection","real data/scientific validity","bootstrap/CI/balancing"],
+            "pythonDependencySourceSha256":{name:digest(ROOT/"python/aquap2py"/name) for name in ("core.py","preprocessing.py","loess.py")},
+            "scope":"All 10 non-classic modes, two fixed coordinate systems; exact observed shortcuts and bounded robust quadratic/default-interpolate LOESS with 8/12/21 unique temperatures, fractional endpoints/Texp, inside-boundary predictions, irregular temperature spacing and an artificial calibration-mean outlier; curated artificial calibration, no random balancing/bootstrap.",
+            "excluded":["LOESS with fewer than 8 unique temperatures, singular local fits or extrapolation","full R defaults/metadata/outlier-detection","real data/scientific validity","bootstrap/CI/balancing"],
+            "profile":args.profile,
             "runs":[],"guards":[]}
     modes=["sfc","sfc-diff","aucs","aucs-diff","aucs.tn","aucs.tn-diff","aucs.tn.dce","aucs.tn.dce-diff","aucs.dce","aucs.dce-diff"]
     cases=[(coord,mode,False,[28,32],30) for coord in ("ot1.12","ot1.15") for mode in modes]
     cases += [("ot1.12","sfc",True,[28,32],30),("ot1.12","sfc-diff",True,[28,32],30),
               ("ot1.12","aucs.dce",False,None,30),("ot1.12","aucs.tn.dce",False,"symm@2",30),
               ("ot1.15","aucs",False,[28,32],30),("ot1.15","aucs.tn.dce",False,[28,32],30)]
+    loess_cases=[(coord,mode,False,[28,32],30.25) for coord in ("ot1.12","ot1.15") for mode in modes]
+    loess_cases += [(coord,mode,False,[28.25,32.75],30.25) for coord in ("ot1.12","ot1.15") for mode in modes if not mode.startswith("sfc")]
+    loess_cases += [(coord,mode,False,[28,32.25],30) for coord in ("ot1.12","ot1.15") for mode in ("aucs","aucs.tn.dce","aucs.tn.dce-diff")]
+    loess_cases += [(coord,mode,False,[20.01,39.99],20.01) for coord in ("ot1.12","ot1.15") for mode in ("aucs.tn.dce","aucs.tn.dce-diff")]
+    loess_cases += [("ot1.12","aucs.tn",False,"symm@1.5",30.25),("ot1.15","aucs.tn.dce",False,[20,40],39.99)]
+    if args.profile=="loess":cases=loess_cases
+    elif args.profile=="all":cases+=loess_cases
+    cases=[(*case,"regular-21") for case in cases]
+    if args.profile!="observed":
+        cases += [(coord,mode,False,[27.25,32.5],30.25,variant)
+                  for variant in ("irregular-outlier-12","minimum-eight")
+                  for coord in ("ot1.12","ot1.15") for mode in ("aucs","aucs.tn.dce","aucs.tn.dce-diff")]
     try:
-        for i,(coord,mode,msc,tc,te) in enumerate(cases):
+        for i,(coord,mode,msc,tc,te,calibration_profile) in enumerate(cases):
             folder=args.output/f"{i+1:02d}-{coord}-{mode}";folder.mkdir()
             cfg={"coordinateSystem":coord,"mode":mode,"tCalib":tc,"tExp":te,"reference":groups[0] if mode.endswith("-diff") else None,
                  "smoothN":21,"calibrationSmoothN":17,"msc":msc,"targets":None}
-            irregular=i>=24
+            irregular=(args.profile!="loess" and i in (24,25))
             keep=np.array([j%7 not in {1,5} for j in range(len(w))]) if irregular else np.ones(len(w),dtype=bool)
             mx,mw=x[:,keep],w[keep]
-            model=temperature_calibration(cal,w,temp,coordinate_system=coord)
+            case_cal,case_temp=cal,temp
+            if calibration_profile!="regular-21":
+                selected_temperatures=([20,21,23,24,27,29,30,32,34,37,39,40]
+                    if calibration_profile=="irregular-outlier-12" else [20,21,24,28,30,33,38,40])
+                select=np.isin(temp,selected_temperatures)
+                case_cal,case_temp=cal[select].copy(),temp[select].copy()
+                if calibration_profile=="irregular-outlier-12":
+                    case_cal[case_temp==32] += .025*np.exp(-.5*((w-1412)/5)**2)+.002*np.exp(-.5*((w-1465)/10)**2)
+            model=temperature_calibration(case_cal,w,case_temp,coordinate_system=coord)
             py=temperature_aquagram(mx,mw,groups,model,mode=mode,t_calib=tc,t_exp=te,reference=cfg["reference"],msc=msc)
-            r,process=run_r(args,folder,{**base,"matrix":mx.tolist(),"wavelengths":mw.tolist(),"config":cfg})
+            r,process=run_r(args,folder,{**base,"matrix":mx.tolist(),"wavelengths":mw.tolist(),"config":cfg,
+                "calibration":{"matrix":case_cal.tolist(),"wavelengths":w.tolist(),"temperatures":case_temp.tolist()}})
             write(folder/"python-output.json",py)
             by_group={g["name"]:g for g in r["result"]["groups"]}
             if set(by_group)!={g["name"] for g in py["groups"]}:raise ValueError("Group labels changed.")
@@ -128,17 +151,20 @@ def main():
             delta=np.abs(a-b);tolerance=args.atol+args.rtol*np.abs(b)
             check={"name":folder.name,"mode":mode,"coordinateSystem":coord,"msc":msc,"tCalib":tc,"tExp":te,"irregularWavelengths":irregular,
                    "passed":bool(np.all(delta<=tolerance)),"values":len(a),"maxAbsDiff":float(delta.max()),
+                   "endpointLoessUsed":py["provenance"]["endpointLoessUsed"],"experimentLoessUsed":py["provenance"]["experimentLoessUsed"],
+                   "calibrationProfile":calibration_profile,"uniqueCalibrationTemperatures":len(np.unique(case_temp)),
                    "maxToleranceRatio":float(np.max(delta/tolerance)),"atol":args.atol,"rtol":args.rtol,
                    "runtime":r["runtime"],"inputSha256":digest(folder/"input.json"),"outputSha256":digest(folder/"output.json"),"process":process}
             if not mode.startswith("sfc") and py["labels"]!=r["result"]["labels"]:raise ValueError("Coordinate labels changed.")
             report["runs"].append(check)
             print(folder.name+": "+("PASS" if check["passed"] else "FAIL")+f" max={check['maxAbsDiff']:.3g}",flush=True)
-        for name,kwargs in [("unobserved-endpoint",{"t_calib":[28.25,32.25]}),("unobserved-Texp",{"t_exp":30.25}),
+        for name,kwargs in [("extrapolation-endpoint",{"t_calib":[19.99,32.25]}),("extrapolation-Texp",{"t_exp":40.01}),
                             ("bootstrap",{"boot_ci":True}),("balancing",{"nr_corr":True})]:
             try:temperature_aquagram(x,w,groups,model,**{"t_calib":[28,32],"t_exp":30,**kwargs})
             except ValueError as e:report["guards"].append({"name":name,"rejected":True,"reason":str(e)})
             else:report["guards"].append({"name":name,"rejected":False})
         report["maximumAbsoluteDifference"]=max(r["maxAbsDiff"] for r in report["runs"])
+        report["maximumToleranceRatio"]=max(r["maxToleranceRatio"] for r in report["runs"])
         report["numericValuesCompared"]=sum(r["values"] for r in report["runs"])
         report["passed"]=all(r["passed"] for r in report["runs"]) and all(g["rejected"] for g in report["guards"])
     except Exception as e:

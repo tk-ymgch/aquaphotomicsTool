@@ -1,4 +1,4 @@
-# aquap2py 0.2.0 — attribution and scope
+# aquap2py 0.3.0 — attribution and scope
 
 aquap2py is an **unofficial, partial Python compatibility implementation** of
 aquap2. It is not the aquap2 R package and is not represented as an upstream
@@ -26,14 +26,15 @@ individual notices or licenses of upstream/reference packages and dependencies.
 - Declared upstream license: `GPL (>=2)` in DESCRIPTION. No separate LICENSE or
   NOTICE file was present in the inspected 0.4.5 source root.
 
-Changes/adaptation date: **2026-10-22**. The Python implementation uses NumPy/SciPy
+Changes/adaptation dates: **2026-10-22–23**. The Python implementation uses NumPy/SciPy
 data structures and numerical operations in place of R/S4 objects and R package
 calls. It implements a limited matrix pipeline, mean-centered PCA,
-classic/classic-diff Aquagrams, observed-temperature calibration with ten
-non-classic Aquagram modes, and centered/unscaled PLS1/kernelpls with scoped
-CV, adjusted-CV component selection and processed-X prediction. Robust LOESS,
-bootstrap/balancing, PLSR-specific outlier removal, other PLS methods/multiple
-responses, full R RNG parity, metadata/analysis-procedure files,
+classic/classic-diff Aquagrams, temperature calibration with ten non-classic
+Aquagram modes and bounded robust LOESS, detrend/EMSC/gap derivative/resampling,
+and centered/unscaled PLS1/kernelpls with scoped CV, adjusted-CV component
+selection, one-pass PLSR outlier exclusion/refitting and processed-X prediction.
+Bootstrap/balancing, singular/extrapolating LOESS, other PLS methods, a multi-target
+wrapper, full R RNG parity, metadata/analysis-procedure files,
 SIMCA/classification, complete import/export and R plotting/S4 semantics remain
 outside this subset. The authoritative
 machine-readable scope is `coverage.json`; its global compatibility flag is
@@ -42,17 +43,21 @@ aquap2 PLSR.
 
 Behavior/reference sources consulted for the implemented subset include:
 
-- `R/gen_coreDataManip.r`: do_snv, do_msc, do_sgolay, do_dptSeq.
-- `R/cube_generateDatasets.r`: ordered dpt module dispatch and model orchestration.
+- `R/gen_coreDataManip.r`: do_snv, do_msc, do_sgolay, do_dptSeq,
+  do_detrend, do_emsc, do_gapDer and do_resampleNIR matrix behavior.
+- `R/cube_generateDatasets.r`: ordered dpt module dispatch, selectWls range
+  selection behavior and model orchestration.
 - `R/prep_transformToAp2.r`: the ttap data-model boundary (simplified in Python).
 - `R/cube_makeModels.r` and `R/crw_cp.R`: mean-centered PCA and returned model fields.
 - `R/calc_aqg.r`: classic/classic-diff and calibrated sfc/AUC/tn/dce formulas,
   calibration-temperature averaging, endpoint min/max, band-area ratios,
-  group averaging and subtraction. The unobserved-temperature LOESS branch is
-  inspected but not implemented or replaced by a different smoother.
+  group averaging and subtraction. Unobserved values use the bounded R-default
+  one-dimensional LOESS profile described below, with observed-value shortcuts.
 - `inst/pData/aqugrStngs`: fixed first-overtone 12/15 coordinate ranges and labels.
 - `R/calc_plsr.r`: kernelpls/CV orchestration, adjusted-CV component selection,
-  additional-component model and processed-X independent prediction behavior.
+  additional-component model, Tukey-hinge PLSR outlier detection, one exclusion/
+  refit pass and processed-X independent prediction behavior. Multiple upstream
+  response names are processed as separate PLS1 fits, not a joint PLS2 fit.
 - `inst/settings.r` and `inst/templates/anProc.r`: calibration SG17,
   measurement AQ SG21, mode, temperature and component-selection defaults.
 - `R/gen_general.r`: getcm result extraction behavior.
@@ -65,7 +70,7 @@ notices and be recorded here with changed files and dates.
 
 ## Numerical dependencies and oracle references
 
-The 2026-10-22 R oracle used the following installed reference packages:
+The 2026-10-22–23 R oracle used the following installed reference packages:
 
 | Reference package | Version | Declared license | Consulted behavior |
 | --- | --- | --- | --- |
@@ -74,7 +79,9 @@ The 2026-10-22 R oracle used the following installed reference packages:
 | pls | 2.9-0 | GPL-2 | msc, kernelpls equations, predictions, CV/adjCV errors |
 | MASS | 7.3-65 | GPL-2 \| GPL-3 | ginv SVD cutoff behavior used by the SG reference |
 | geometry | 0.5.2 | GPL (>=3) | Oracle polyarea mathematical polygon-area behavior |
-| base/stats in R | 4.6.1 | Individual R source notices | Foreign-center scale/RMS and inspected, unimplemented LOESS |
+| prospectr | 0.2.11 | MIT | Oracle gapDer segment/gap convolution and endpoint behavior |
+| pracma | 2.4.6 | GPL (>=3) | Oracle interp1 methods; no pracma implementation translated or vendored |
+| base/stats in R | 4.6.1 | Individual R source notices | Foreign-center scale/RMS, Tukey hinges, bounded one-dimensional LOESS |
 
 `GPL-2` on signal/pls is recorded as written; it is not silently relabeled
 `GPL-2.0-or-later` or GPLv3-compatible. Installed oracle dependencies retain their
@@ -86,7 +93,39 @@ shoelace formula with NumPy. It does not copy geometry source strings, vendor
 geometry, or call it at runtime. Geometry's GPL (>=3) declaration is recorded for
 the oracle reference; it is not relabeled as GPL-2 or an unconditional licensing
 compatibility finding. SFC expresses the foreign-center scaling formula in
-NumPy. No stats LOESS implementation is copied into this release.
+NumPy. Resampling independently uses SciPy's PCHIP and not-a-knot cubic-spline
+implementations, plus NumPy interpolation/selection; pracma is an R oracle only.
+The EMSC and detrend code expresses the matrix least-squares operations with
+NumPy. Gap derivative expresses the prospectr-defined segment/gap operations;
+prospectr's MIT notice and authorship remain applicable to its reference code.
+
+## R LOESS adaptation notice (0.3.0)
+
+`loess.py` adapts the one-predictor default algorithm in R stats `loess.R`
+(`simpleLoess`) and `loessf.f` (`ehg126`, `ehg124`, `ehg127`, `ehg128`, `lowesw`):
+<https://svn.r-project.org/R/trunk/src/library/stats/>. It implements quadratic
+local fits, span 0.75, four symmetric-family fits, default cell 0.2 subdivision,
+and cubic Hermite interpolation. The R wrapper is GPL-2.0-or-later. The Python
+adaptation uses NumPy SVD rather than vendoring R's QR/Fortran implementation;
+singular neighborhoods, extrapolation and fewer than eight unique temperatures
+are explicitly unsupported. Installed R 4.6.1 and the pinned aquap2 public API
+are the numerical references. This is not a general stats::loess API port.
+
+The following complete notice is retained in `loess.py` and here for supporting
+documentation. Original R source identifies these authors and terms:
+
+> Copyright (C) 1998--2020 The R Core Team
+> The authors of this software are Cleveland, Grosse, and Shyu.
+> Copyright (c) 1989, 1992 by AT&T.
+> Permission to use, copy, modify, and distribute this software for any
+> purpose without fee is hereby granted, provided that this entire notice
+> is included in all copies of any software which is or includes a copy
+> or modification of this software and in all copies of the supporting
+> documentation for such software.
+> THIS SOFTWARE IS BEING PROVIDED "AS IS", WITHOUT ANY EXPRESS OR IMPLIED
+> WARRANTY. IN PARTICULAR, NEITHER THE AUTHORS NOR AT&T MAKE ANY
+> REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
+> OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
 
 The PLS implementation independently expresses kernel PLS1 linear algebra,
 centering, PRESS/adjusted-CV curves and coefficients with NumPy. Workbench's
@@ -97,7 +136,7 @@ NumPy random sampling does not reproduce R's seed stream.
 
 Versioned numerical evidence is recorded in coverage.json. The 0.1.0 oracle
 source hashes identify that historical snapshot. They are not presented as
-hashes of the complete 0.2.0 package. Current temperature/PLSR reports bind their
+hashes of the complete current package. Current temperature/PLSR/preprocessing reports bind their
 own source and artificial fixtures; ordinary user runs do not execute R.
 
 The separately inspected aquap2 **0.5.1** commit

@@ -20,7 +20,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
-from aquap2py.plsr import plsr, predict_plsr, REFERENCE_COMMIT
+from aquap2py.plsr import plsr, plsr_outlier_indices, predict_plsr, REFERENCE_COMMIT
 from aquap2py.preprocessing import preprocess
 from compare_aquap2 import difference, write_json, versions
 
@@ -63,6 +63,32 @@ def cases():
     ]
 
 
+def outlier_fixture():
+    rng = np.random.default_rng(20261027)
+    y = np.repeat(np.arange(1., 7.), 10)
+    axis = np.linspace(-1, 1, 17)
+    x = 2 + .3 * axis[None, :] + .08 * y[:, None] * axis[None, :]
+    x += rng.normal(0, .009, x.shape)
+    x[3] += .5 * axis
+    groups = [str(i % 5) for i in range(len(y))]
+    ids = [f"ARTIFICIAL-{i:04d}" for i in range(len(y))]
+    ids[7] = '引用,"試料"\n日本語'
+    return x, y, 1300.25 + 5 * np.arange(17), ids, groups, x[:5] + rng.normal(0, .001, (5, 17)), y[:5].copy()
+
+
+def outlier_cases():
+    return [
+        ("outlier-getter-repeated-y", [], 2, "LOO"),
+        ("outliers-fixed-loo", [], 2, "LOO"),
+        ("outliers-fixed-group", [], 2, "group"),
+        ("outliers-auto-loo", [], None, "LOO"),
+        ("outliers-auto-group", [], None, "group"),
+        ("outliers-zero-range", [], 2, "LOO"),
+        ("outliers-unique-y", [], 2, "LOO"),
+        ("outliers-sg-msc-fixed-group", [{"method": "sgolay", "window": 11, "polyorder": 2, "derivative": 0}, {"method": "msc"}], 2, "group"),
+    ]
+
+
 def call_r(args, source, destination, home):
     home.mkdir(parents=True)
     env = os.environ.copy()
@@ -99,9 +125,25 @@ def verify_runtime(r):
 
 def compare(py, r, processed, payload, unknown, args):
     runtime = verify_runtime(r)
-    if r["ids"] != payload["ids"] or r["cvGroups"] != payload["cvGroups"]:
+    retained = py.get("outlierFiltering", {}).get("retainedIndices", list(range(len(processed))))
+    if r["ids"] != [payload["ids"][i] for i in retained] or r["cvGroups"] != [payload["cvGroups"][i] for i in retained]:
         raise ValueError("行ID/CV群の順序が一致しません。")
-    checks = {"nativePreprocessing": difference(processed, np.array(r["preprocessed"]), args.atol, args.rtol)}
+    if r.get("retainedIndices", retained) != retained:
+        raise ValueError("外れ値除外後の元行番号が一致しません。")
+    checks = {"nativePreprocessing": difference(processed[retained], np.array(r["preprocessed"]), args.atol, args.rtol)}
+    if "outlier" in r:
+        if r["outlier"]["api"] != "aquap2::pls_outlier_getIndices":
+            raise ValueError("正式outlier公開APIの記録がありません。")
+        rule = py.get("outlierFiltering") or plsr_outlier_indices(py, detection_range=payload["pls"].get("outlierRange", .5))
+        if rule["keepMask"] != r["outlier"]["keepMask"]:
+            raise ValueError("公開outlier判定の保持マスクが一致しません。")
+        checks["outlier.publicKeepMask"] = {"values": len(rule["keepMask"]), "maxAbsDiff": 0.,
+            "maxToleranceRatio": 0., "comparison": "exact boolean equality", "passed": True}
+        if rule["excludedIndices"] != r["outlier"]["excludedIndices"]:
+            raise ValueError("公開outlier判定の除外行が一致しません。")
+        if py.get("outlierFiltering"):
+            checks["outlier.initialCVPredictions"] = difference(np.array(rule["initialPredictedCV"]), np.array(r["outlier"]["initialModel"]["validation"]["pred"])[:, -1], args.atol, args.rtol)
+            checks["outlier.preprocessedBeforeExclusion"] = difference(processed, np.array(r["preprocessedBeforeOutlier"]), args.atol, args.rtol)
     for key in ("model", "modelPlus"):
         a, b = py[key], r[key]
         aseg, bseg = a["validation"]["segments"], b["validation"]["segments"]
@@ -140,6 +182,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--case", action="append")
+    parser.add_argument("--outliers-only", action="store_true", help="Same-raw-input public outlier getter/exclusion/refit cases instead of the original PLS1 suite.")
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--atol", type=float, default=1e-8)
     parser.add_argument("--rtol", type=float, default=1e-8)
@@ -149,10 +192,10 @@ def main():
     if args.output.exists():
         raise ValueError("証拠の上書きを避けるため新規outputフォルダーを指定してください。")
     args.output.mkdir(parents=True)
-    x, y, w, ids, groups, ux, uy = fixture()
-    write_json(args.output / "fixture.json", {"artificial": True, "seed": 20261025, "matrix": x.tolist(), "target": y.tolist(), "wavelengths": w.tolist(), "ids": ids, "cvGroups": groups})
+    x, y, w, ids, groups, ux, uy = outlier_fixture() if args.outliers_only else fixture()
+    write_json(args.output / "fixture.json", {"artificial": True, "seed": 20261027 if args.outliers_only else 20261025, "matrix": x.tolist(), "target": y.tolist(), "wavelengths": w.tolist(), "ids": ids, "cvGroups": groups})
     records = []
-    for name, steps, ncomp, validation in cases():
+    for name, steps, ncomp, validation in (outlier_cases() if args.outliers_only else cases()):
         if args.case and name not in args.case:
             continue
         directory = args.output / name; directory.mkdir()
@@ -161,10 +204,13 @@ def main():
         processed = preprocess(x, steps)
         unknown = preprocess(np.vstack([x, ux]), steps)[len(x):]
         samples = [str(i // 2) for i in range(len(x))] if isinstance(validation, int) else None
-        payload = {"schemaVersion": 1, "artificial": True, "matrix": x.tolist(), "target": y.tolist(),
+        observed = y + np.arange(len(y)) * .00001 if name == "outliers-unique-y" else y
+        payload = {"schemaVersion": 1, "artificial": True, "matrix": x.tolist(), "target": observed.tolist(),
                    "wavelengths": w.tolist(), "ids": ids, "cvGroups": groups, "sampleIds": samples,
                    "steps": steps, "seed": 20261025, "pls": {"ncomp": ncomp, "validation": validation},
                    "unknown": {"matrix": unknown.tolist(), "observed": None if name.endswith("unknown-unlabelled") else uy.tolist()}}
+        if args.outliers_only:
+            payload["pls"].update(excludeOutliers=name != "outlier-getter-repeated-y", outlierRange=0. if name == "outliers-zero-range" else .5)
         source, destination = directory / "input.json", directory / "r-output.json"
         write_json(source, payload)
         try:
@@ -172,8 +218,9 @@ def main():
             r = json.loads(destination.read_text(encoding="utf-8"))
             verify_runtime(r)
             replay = [r["model"]["validation"]["segments"]] if isinstance(validation, int) else None
-            py = plsr(processed, y, ncomp=ncomp, validation=validation, cv_groups=groups if validation == "group" else None,
-                      sample_ids=samples, seed=payload["seed"], segments_schedule=replay)
+            py = plsr(processed, observed, ncomp=ncomp, validation=validation, cv_groups=groups if validation == "group" else None,
+                      sample_ids=samples, seed=payload["seed"], segments_schedule=replay,
+                      exclude_outliers=payload["pls"].get("excludeOutliers", False), outlier_range=payload["pls"].get("outlierRange", .5))
             write_json(directory / "python-output.json", py)
             checks, runtime = compare(py, r, processed, payload, unknown, args)
             passed = all(v["passed"] for v in checks.values()) and process["exitCode"] == 0
@@ -181,6 +228,9 @@ def main():
                       "ncompRequested": ncomp, "selectedComponents": py["selectedComponents"], "checks": checks,
                       "runtime": runtime, "rngScope": "conditional-on-exported-final-R-segments" if isinstance(validation, int) else "deterministic-native-partitions",
                       "inputSha256": sha(source), "rOutputSha256": sha(destination), "pythonOutputSha256": sha(directory / "python-output.json")}
+            if args.outliers_only:
+                record.update(excludeOutliers=payload["pls"]["excludeOutliers"], outlierRange=payload["pls"]["outlierRange"],
+                    retainedRows=len(py["observed"]), excludedOriginalIndices=py.get("outlierFiltering", {}).get("excludedIndices", []))
         except Exception as exc:
             record = {"case": name, "passed": False, "error": f"{type(exc).__name__}: {exc}"}
         records.append(record)
@@ -190,13 +240,15 @@ def main():
     total = sum(len(r.get("checks", {})) for r in records)
     report = {"schemaVersion": 1, "createdAt": datetime.now(timezone.utc).isoformat(),
               "passed": bool(records) and all(v["passed"] for v in records), "artificialOnly": True,
-              "formalApi": "installed aquap2 0.4.5 public gdmm + plot_pls_indepPred",
+              "formalApi": "installed aquap2 0.4.5 public gdmm + pls_outlier_getIndices + plot_pls_indepPred",
               "sourceHarnessUsed": False, "rRuntimeRequiredByPythonPackage": False,
               "versions": versions(), "cases": records, "caseCount": len(records), "numericCheckCount": total,
               "tolerance": {"atol": args.atol, "rtol": args.rtol},
               "coreFiles": [{"path": str(p.relative_to(ROOT)).replace("\\", "/"), "sha256": sha(p)} for p in [ROOT / "python/aquap2py/plsr.py", ROOT / "python/aquap2py/preprocessing.py", args.r_engine, Path(__file__)]],
               "scope": ["PLS1 kernelpls / center TRUE / scale FALSE", "native DPT applied to all X before CV", "LOO and leave-one-group-out fixed/automatic components", "training/CV/adjusted-CV all-component predictions/coefficient/error curves", "unknown already-processed-X public prediction", "random fixed-component CV conditional on concrete exported R segments"],
-              "excluded": ["R-seed/random-sample parity", "random-CV automatic-selection history parity", "PLS-specific outlier exclusion", "missing-target omission", "other pls methods/multi-response PLS2", "nested-CV performance equivalence", "automatic DPT application to unknown spectra", "real measured user-data validation"]}
+              "excluded": ["R-seed/random-sample parity", "random-CV automatic-selection history parity", "random/replay-CV outlier exclusion", "missing-target omission", "other pls methods/multi-response PLS2", "nested-CV performance equivalence", "automatic DPT application to unknown spectra", "real measured user-data validation"]}
+    if args.outliers_only:
+        report["scope"] += ["PLSR-specific one-pass CV-prediction Tukey-hinge filtering grouped by equal observed Y; LOO/group only", "public outInd is a keep mask; original 0-based row mapping is retained", "full native DPT precedes filtering and is not refitted after exclusion", "zero detection range and unique observed-Y no-exclusion cases"]
     report["looSegmentOrderPolicy"] = "Compare exact singleton memberships, ignoring R's randomized order of singleton folds; OOF row order is unchanged."
     write_json(args.output / "report.json", report); write_json(args.report, report)
     print(json.dumps({"passed": report["passed"], "cases": len(records), "checks": total, "report": str(args.report)}, ensure_ascii=False), flush=True)

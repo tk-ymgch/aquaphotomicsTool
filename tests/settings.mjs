@@ -26,7 +26,7 @@ function check(name, test) { try { test(); passed++; } catch (error) { console.e
 check('new document roundtrip and detached snapshots', () => {
   const input = structuredClone(config), doc = createSettingsDocument(input, { name: summary.name });
   assert.equal(doc.format, 'aquaphotomics-workbench-settings');
-  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.6');
+  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.7');
   assert.equal(doc.source.sheet, null); assert.ok(Number.isFinite(Date.parse(doc.createdAt)));
   input.range[0] = 999; input.wavelengthColumns.length = 0;
   assert.deepEqual(decode(doc), config);
@@ -209,5 +209,12 @@ check('v1.5 documents preserve an explicit previous engine and do not gain nativ
   assert.deepEqual(decode(doc), cfg);
   assert.equal('nativeAquagram' in decode(doc), false);
   assert.equal('nativePlsr' in decode(doc), false);
+});
+check('v1.7 fractional temperature, detrend and PLSR outlier settings roundtrip', () => {
+  const cfg={...config,analysisEngine:'aquap2py',nativeAquagram:{...nativeAquagram,tCalib:[20.25,30.75],tExp:25.5},nativePreprocessing:{detrend:true},nativePlsr:{...nativePlsr,excludeOutliers:true,outlierRange:0.5}};
+  assert.deepEqual(decode(createSettingsDocument(cfg,null)),cfg);
+  for(const change of [{excludeOutliers:'true'},{outlierRange:-1},{outlierRange:11},{outlierRange:NaN}]) assert.throws(()=>decode({...cfg,nativePlsr:{...cfg.nativePlsr,...change}}));
+  assert.throws(()=>decode({...cfg,analysisEngine:'python'}),/detrend/);
+  assert.throws(()=>decode({...cfg,nativePreprocessing:{detrend:'yes'}}));
 });
 console.log(`PASS: ${passed} settings checks (roundtrip, legacy provenance, strict validation, columns, SG grid, PLS, native calibration/PLSR, safety)`);

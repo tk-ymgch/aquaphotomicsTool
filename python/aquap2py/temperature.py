@@ -1,8 +1,8 @@
 """Bounded temperature-calibrated Aquagrams from aquap2 0.4.5 definitions.
 
-Only observed calibration endpoints/Texp are supported: R's robust quadratic
-LOESS path is deliberately refused. No R process, arbitrary expression, or
-hidden calibration data is used. See NOTICE.md and provenance for scope.
+Observed calibration values use aquap2's exact-value shortcuts. Unobserved
+values use a bounded implementation of R's default robust quadratic LOESS.
+No R process, arbitrary expression, or hidden calibration data is used.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import numpy as np
 
 from .core import REFERENCE_COMMIT, VERSION, _labels, _vector
 from .preprocessing import _finite_result, _matrix, msc as apply_msc, sgolay
+from .loess import robust_quadratic_loess
 
 _BANDS12 = ((1336, 1348), (1360, 1366), (1370, 1376), (1380, 1388),
             (1398, 1418), (1422, 1430), (1432, 1444), (1448, 1454),
@@ -120,7 +121,7 @@ def temperature_calibration(matrix: Any, wavelengths: Any, temperatures: Any, *,
                 "calibrationCutNm": [1300, 1600], "smoothN": int(smooth_n), "sgPolyorder": 2,
                 "sgDerivative": 0, "sgTs": 1, "order": ["SG-full-spectrum", "cut-1300-1600", "mean-per-temperature", "polygon-AUC-ratio"],
                 "foreignCenterData": "unsmoothed-raw-temperature-means-and-replicate-counts",
-                "outlierExclusion": "not-performed-input-must-be-curated", "loessImplemented": False,
+                "outlierExclusion": "not-performed-input-must-be-curated", "loessImplemented": True,
                 "fullAreaNumericalFloor": "64*eps*variables*max(abs(spectrum))*wavelength-span"}}
 
 
@@ -165,9 +166,27 @@ def _range(t_calib: Any, t_exp: Any, temperatures: np.ndarray):
         raise ValueError("TCalib下限は上限より小さい有限値にしてください。")
     if limits[0] < temperatures[0] or limits[1] > temperatures[-1]:
         raise ValueError("TCalibが校正データの温度範囲外です。")
-    if not np.isin(limits, temperatures).all() or experiment not in temperatures:
-        raise ValueError("未観測温度のLOESS補間は未実装です。TCalib両端とTexpを校正で観測済みの温度に完全一致させてください。")
+    if experiment < temperatures[0] or experiment > temperatures[-1]:
+        raise ValueError("Texpが校正データの温度範囲外です。LOESS外挿は未対応です。")
     return limits, experiment
+
+
+def _calibration_at(temperatures, auc, limits, experiment):
+    """Match the two separate observed-value branches in aquap2 calc_aqg.r."""
+    endpoint_loess = not np.isin(limits, temperatures).all()
+    experiment_loess = experiment not in temperatures
+    query = (list(limits) if endpoint_loess else []) + ([experiment] if experiment_loess else [])
+    if query:
+        predicted = np.column_stack([robust_quadratic_loess(temperatures, column, query) for column in auc.T])
+    endpoints = predicted[:2] if endpoint_loess else auc[np.isin(temperatures, limits)]
+    baseline = predicted[-1] if experiment_loess else auc[temperatures == experiment][0]
+    return endpoints, baseline, {
+        "endpointLoessUsed": endpoint_loess, "experimentLoessUsed": experiment_loess,
+        "bothEndpointsPredictedWhenEitherIsUnobserved": endpoint_loess,
+        "loessProfile": {"predictors": 1, "degree": 2, "span": .75, "family": "symmetric",
+            "iterations": 4, "surface": "interpolate", "cell": .2,
+            "minimumUniqueTemperatures": 8, "singularNeighborhoodsSupported": False,
+            "extrapolationSupported": False} if query else None}
 
 
 def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration: dict, *,
@@ -175,7 +194,7 @@ def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration
                          reference: str | None = None, smooth_n: int = 21, msc: bool = False,
                          msc_reference: Any = None, targets: Any = None,
                          nr_corr: bool = False, boot_ci: bool = False) -> dict:
-    """Run 10 calibrated modes, without bootstrap/balancing/LOESS.
+    """Run 10 calibrated modes, including bounded temperature LOESS.
 
     reference is the exact control-group label for '-diff' modes, not the
     transport/UI prefix 'group:'. AUC coordinates are fixed bands: wavelengths
@@ -198,6 +217,7 @@ def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration
         raise ValueError("非diff modeではreference=Noneにしてください。対照群差には-diff modeを選択してください。")
     temp, raw_means, cw, auc, counts, bands, coordinates = _read_calibration(calibration)
     limits, experiment = _range(t_calib, t_exp, temp)
+    endpoints, experiment_auc, interpolation = _calibration_at(temp, auc, limits, experiment)
     processed = sgolay(x, window=smooth_n, polyorder=2, derivative=0)
     masks = [np.asarray(labels) == name for name in names]
     warnings = []
@@ -205,7 +225,8 @@ def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration
         "referenceAquap2Version": "0.4.5", "referenceCommit": REFERENCE_COMMIT,
         "mode": mode, "coordinateSystem": calibration["coordinateSystem"],
         "tCalibRequested": t_calib if t_calib is None or isinstance(t_calib, str) else [_finite_scalar(v, "TCalib") for v in t_calib], "tCalib": limits, "tExp": experiment,
-        "observedTemperaturesOnly": True, "loessImplemented": False,
+        "observedTemperaturesOnly": not (interpolation["endpointLoessUsed"] or interpolation["experimentLoessUsed"]),
+        "loessImplemented": True, **interpolation,
         "smoothN": int(smooth_n), "sgPolyorder": 2, "sgDerivative": 0, "sgTs": 1,
         "calibrationSmoothN": calibration.get("provenance", {}).get("smoothN"),
         "nrCorr": False, "bootCI": False, "completeCompatibility": False,
@@ -252,15 +273,14 @@ def temperature_aquagram(matrix: Any, wavelengths: Any, groups: Any, calibration
             warnings.append("AUC系ではR本体と同じく内部MSC/referenceは使用しません。")
         ratios, actual = _auc_table(processed, w, bands)
         means = np.array([ratios[mask].mean(axis=0) for mask in masks])
-        endpoint = auc[np.isin(temp, limits)]
-        minimum, maximum = endpoint.min(axis=0), endpoint.max(axis=0)
+        minimum, maximum = endpoints.min(axis=0), endpoints.max(axis=0)
         difference = maximum - minimum
         if np.any(difference == 0) or not np.isfinite(difference).all():
             raise ValueError("TCalib両端の校正AUC面積比が等しい帯があります。校正範囲を確認してください。")
         values = (means - minimum) * 100 / difference
         if not mode.endswith("-diff") and ".tn" not in mode and np.any((values < 0) | (values > 100)):
             warnings.append("校正範囲に対するAUC%が0〜100%を外れています。値はclipせず、校正範囲と測定/校正条件を確認してください。")
-        baseline = (auc[temp == experiment][0] - minimum) * 100 / difference
+        baseline = (experiment_auc - minimum) * 100 / difference
         if ".tn" in mode:
             values = values - baseline
         if ".dce" in mode:

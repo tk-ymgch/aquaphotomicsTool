@@ -58,7 +58,12 @@ run <- function(input) {
   if (!identical(tolower(home),tolower(normalizePath(Sys.getenv("HOME"),winslash="/",mustWork=TRUE)))) stop("R_USER home mismatch")
   settings <- file.path(home,"settings"); dir.create(settings,showWarnings=FALSE)
   file.copy(file.path(root,"settings","settings.r"),file.path(settings,"settings.r"),overwrite=TRUE)
-  cat("\nstn$plsr_calcInParallel <- FALSE\nstn$plsr_nrTestIterations <- 7\nstn$allSilent <- TRUE\n",file=file.path(settings,"settings.r"),append=TRUE)
+  detRange<-if(is.null(input$pls$outlierRange))0.5 else input$pls$outlierRange
+  exOut<-if(is.null(input$pls$excludeOutliers))FALSE else input$pls$excludeOutliers
+  if(!is.numeric(detRange)||length(detRange)!=1L||!is.finite(detRange)||detRange<0||!is.logical(exOut)||length(exOut)!=1L)stop("Invalid outlier options")
+  cat("\nstn$plsr_calcInParallel <- FALSE\nstn$plsr_nrTestIterations <- 7\nstn$allSilent <- TRUE\n",
+    paste0("stn$plsr_calc_exOutDetectionRange <- ",format(detRange,scientific=TRUE,digits=17),"\n"),
+    file=file.path(settings,"settings.r"),append=TRUE)
   Sys.setenv(AQUAP2SH=settings)
   writeLines(paste0("AQUAP2SH = ",settings),file.path(home,".Renviron"),useBytes=TRUE)
   suppressPackageStartupMessages(library(aquap2,lib.loc=lib))
@@ -91,10 +96,17 @@ run <- function(input) {
   fd<-aquap2::ttap(list(header=header,NIR=x),md=md,dol=FALSE,ncpwl=1,stf=FALSE)
   valid<-input$pls$validation
   if (identical(valid,"group")) valid<-"C_CV"
-  ap<-do.call(aquap2::getap,list(do.pca=FALSE,do.aqg=FALSE,do.pls=TRUE,do.sim=FALSE,do.da=FALSE,do.rnf=FALSE,do.svm=FALSE,do.nnet=FALSE,
+  apArgs<-list(do.pca=FALSE,do.aqg=FALSE,do.pls=TRUE,do.sim=FALSE,do.da=FALSE,do.rnf=FALSE,do.svm=FALSE,do.nnet=FALSE,
     spl.var=NULL,spl.wl=NULL,dpt.pre=if (!length(dpt)) NULL else dpt,dpt.post=NULL,
     spl.do.csAvg=FALSE,spl.do.noise=FALSE,spl.do.exOut=FALSE,
-    pls.regOn="Y_Target",pls.ncomp=input$pls$ncomp,pls.valid=valid,pls.exOut=FALSE))
+    pls.regOn="Y_Target",pls.ncomp=input$pls$ncomp,pls.valid=valid,pls.exOut=exOut)
+  ap<-do.call(aquap2::getap,apArgs)
+  initialCube<-NULL
+  if(exOut){
+    initialArgs<-apArgs;initialArgs$pls.exOut<-FALSE
+    set.seed(as.integer(input$seed))
+    initialCube<-aquap2::gdmm(fd,ap=do.call(aquap2::getap,initialArgs))
+  }
   set.seed(as.integer(input$seed))
   runtime$gdmmAttempted<<-TRUE
   cube<-aquap2::gdmm(fd,ap=ap)
@@ -108,14 +120,25 @@ run <- function(input) {
   runtime$actualModelCenter<<-mods$model[[1]]$center
   runtime$actualModelScalePresent<<-!is.null(mods$model[[1]]$scale)
   runtime$nativeDptSteps<<-I(dpt)
-  out<-list(schemaVersion=1L,ok=TRUE,runtime=runtime,ids=I(ids),cvGroups=I(groups),
-    preprocessed=unname(as.matrix(used$NIR)),model=export_model(mods$model[[1]]),modelPlus=export_model(mods$modelPlus[[1]]))
+  retained<-match(rownames(mods$usedDS[[1]]$header),rows)
+  if(anyNA(retained)||anyDuplicated(retained))stop("Unexpected model row mapping")
+  diagnosticCube<-if(is.null(initialCube))cube else initialCube
+  diagnosticMods<-aquap2::getcm(diagnosticCube,1,what="plsr")
+  publicOutlier<-aquap2::pls_outlier_getIndices(diagnosticCube,detRange=detRange)[[1]][[1]]
+  runtime$outlierApi<<-"aquap2::pls_outlier_getIndices"
+  runtime$excludeOutliers<<-exOut
+  out<-list(schemaVersion=1L,ok=TRUE,runtime=runtime,ids=I(ids[retained]),cvGroups=I(groups[retained]),
+    preprocessed=unname(as.matrix(used$NIR)[retained,,drop=FALSE]),preprocessedBeforeOutlier=unname(as.matrix(used$NIR)),
+    retainedIndices=I(as.integer(retained)-1L),model=export_model(mods$model[[1]]),modelPlus=export_model(mods$modelPlus[[1]]),
+    outlier=list(api="aquap2::pls_outlier_getIndices",detectionRange=detRange,keepMask=I(as.logical(publicOutlier$outInd)),
+      retainedIndices=I(as.integer(which(publicOutlier$outInd))-1L),excludedIndices=I(as.integer(which(!publicOutlier$outInd))-1L),
+      initialModel=export_model(diagnosticMods$model[[1]])))
   if (is.null(input$pls$ncomp) && (identical(valid,"LOO") || identical(valid,"C_CV"))) {
     # gdmm does not retain selection trials. For deterministic partitions only,
     # independently replay public pls::plsr after the successful formal call.
-    nc<-min(round(n*.25),30,p);sw<-12;lev<-length(unique(y))
+    nc<-min(round(length(retained)*.25),30,p);sw<-12;lev<-length(unique(y[retained]))
     if(nc>lev){nc<-lev;sw<-lev-1}
-    flat<-data.frame(yvar=y,allData=used$NIR)
+    flat<-data.frame(yvar=y[retained],allData=as.matrix(used$NIR)[retained,,drop=FALSE])
     call<-list(formula=yvar~allData,data=flat,validation="CV",segments=mods$model[[1]]$validation$segments)
     if(nc>sw)call$ncomp<-nc
     selection<-do.call(pls::plsr,call)

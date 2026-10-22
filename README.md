@@ -1,30 +1,32 @@
-# Aquaphotomics Workbench v1.6
+# Aquaphotomics Workbench v1.7.0
 
 CSV・Excelのスペクトルを読み込み、前処理、PCA、交差検証付きPLS回帰、Aquagram、解析条件の比較・保存を行う研究用Webアプリです。React・Vite・TypeScript、Pyodide Web Workerを用い、VKC Visualizer 2のWeb版と技術構成を揃えています。
 
-黒・白・グレーの日本語UIで、新しく読み込んだデータの既定エンジンは **aquap2py 0.2.0** です。aquap2互換のPython部分移植をブラウザー内で実行し、Rの導入・接続を必要としません。温度校正・AUC系Aquagramとaquap2方式PLSRを条件限定で追加しました。初回のPython実行環境・ライブラリ取得にはネット接続が必要です。既存のWorkbench標準Pythonと、任意のR本体参照実行も残しています。
+黒・白・グレーの日本語UIで、新しく読み込んだデータの既定エンジンは **aquap2py 0.3.0** です。aquap2互換のPython部分移植をブラウザー内で実行し、Rの導入・接続を必要としません。v1.7.0では温度LOESS、全範囲detrend、PLSR外れ値除外を追加しました。初回のPython実行環境・ライブラリ取得にはネット接続が必要です。既存のWorkbench標準Pythonと、任意のR本体参照実行も残しています。
 
-## aquap2pyを使う（v1.6 / package 0.2.0）
+## aquap2pyを使う（v1.7.0 / package 0.3.0）
 
-`aquap2py` はaquap2の計算をPythonで扱う意図を表す名称で、公式Python版・全機能の移植を意味しません。参照先は固定 **aquap2 0.4.5 / commit `d31c1231bf71f0e73f1a630a32934602782be488`** です。アプリ版1.6と、Pythonパッケージ版0.2.0、参照Rパッケージ版0.4.5を区別します。
+`aquap2py` はaquap2の計算をPythonで扱う意図を表す名称で、公式Python版・全機能の移植を意味しません。参照先は固定 **aquap2 0.4.5 / commit `d31c1231bf71f0e73f1a630a32934602782be488`** です。アプリ版1.7.0、Pythonパッケージ版0.3.0、参照Rパッケージ版0.4.5を区別します。完全対応フラグはfalseです。
 
 | エンジン | 用途・主な範囲 | 実行先 |
 | --- | --- | --- |
-| aquap2py（新規既定） | 前処理、平均中心化PCA、classic／classic-diff、観測温度限定の校正AQ10モード、PLS1/kernelplsのnative CV | ブラウザー内、R不要 |
+| aquap2py（新規既定） | 前処理・全範囲detrend、平均中心化PCA、classic／classic-diff、限定LOESS付き校正AQ10モード、PLS1/kernelplsのnative CVと外れ値除外 | ブラウザー内、R不要 |
 | Workbench標準Python | 既存の前処理、PCA、母SDのAQ、nested CVのPLS | ブラウザー内、R不要 |
 | aquap2本体：R参照実行 | Workbench前処理後のPCA・AQを本体で実行する任意の比較経路 | 同じPCのRサービス |
 
 「解析方式」で、機能ごとの移植状態、本体との数値照合状態、条件・未対応を解析前から確認できます。`completeCompatibility=false` は全体互換を主張しないという明示値です。個々の機能が条件限定で照合済みでも、全API・全データ・全設定への対応にはなりません。今回の解析でR本体を実行したかどうかは、機能検証とは別に結果へ記録します。
 
-aquap2pyでは欠損値補完、PCAの波長標準化、AQ基準なしを実行しません。温度校正の未観測温度LOESS補間、bootstrap/観測数補正、分類、装置固有I/O、PLSRの全method・outlier除外、R metadata・実験設計・描画の全体互換も未対応です。選択した設定を黙って変えずに停止します。従来の群平均AQや外側nested CVのPLSにはWorkbench標準Pythonを選びます。以前の設定に保存された明示的なPython選択は維持します。
+aquap2pyでは欠損値補完、PCAの波長標準化、AQ基準なしを実行しません。LOESS外挿・特異近傍、bootstrap/観測数補正、分類、装置固有I/O、PLSRの全method・R乱数互換、R metadata・実験設計・描画の全体互換も未対応です。選択した設定を黙って変えずに停止します。従来の群平均AQや外側nested CVのPLSにはWorkbench標準Pythonを選びます。以前の設定に保存された明示的なPython選択は維持します。
 
-使い方・通常Pythonへのローカル導入・検証の読み方は[AQUAP2PY.md](docs/AQUAP2PY.md)、[互換範囲](docs/AQUAP2PY_COVERAGE.md)を参照してください。0.2.0の基礎数値は `qa/v1.6-classic-verification.json` の12条件・60数値チェック、温度AQは `qa/v1.6-temperature-verification.json` の26条件・1,026値、PLSRは `qa/v1.6-plsr-verification.json` の13条件・420数値チェックが許容差内です。420は配列・指標のチェック件数です。0.1.0の検証は履歴として残し、古い全source SHAを現版全体の再検証とは扱いません。
+使い方・通常Pythonへのローカル導入・検証の読み方は[AQUAP2PY.md](docs/AQUAP2PY.md)、[互換範囲](docs/AQUAP2PY_COVERAGE.md)、[版別の検証記録](docs/VALIDATION.md)を参照してください。v1.7の温度AQは86条件・3,438値、PLSR外れ値は8条件・280チェック・25,940値を本体と照合しました。追加前処理の正本は `qa/v1.7-preprocessing-verification.json` です。旧0.1.0/0.2.0の検証は当時の履歴として残し、古い全source SHAを現版全体の再検証とは扱いません。
 
-## 温度校正Aquagram・aquap2方式PLSR（v1.6）
+## 温度校正Aquagram・aquap2方式PLSR
 
-aquap2pyの「温度校正Aquagram」を有効にし、測定データとは別に校正CSV・Excelを読み込み、温度列を選びます。TCalib両端とTexpは校正で観測した温度へ完全一致させます。校正用SGの既定17点と、測定AQ内部SGの既定21点は別設定です。sfc/diffとAUC系8モード、12/15固定帯に対応します。AUCの座標は波長帯の多角形面積比で、図の帯中央nmは単一点の測定値ではありません。DCEは℃相当の尺度で、試料温度の推定や有意差を意味しません。sfcは測定格子と校正の1300〜1600 nm内格子の一致が必要です。設定JSONに校正値は含めず、再開時に校正ファイルを再読込し、保存したSHA-256と照合します。結果ZIPには校正入力CSV、校正モデル、AQ結果と来歴を含めます。
+aquap2pyの「温度校正Aquagram」を有効にし、測定データとは別に校正CSV・Excelを読み込み、温度列を選びます。観測済み温度は表の値を使い、未観測のTCalib両端・Texpは校正範囲内、8水準以上、非特異近傍に限りR既定のrobust quadratic LOESSで求めます。片方の端点だけ未観測の場合は両端をLOESSで予測します。校正用SGの既定17点と測定AQ内部SGの既定21点は別設定です。sfc/diffとAUC系8モード、12/15固定帯に対応します。AUC座標は波長帯の多角形面積比で、帯中央nmは単一点測定値ではありません。DCEは℃相当の尺度で、試料温度推定や有意差を意味しません。sfcの中心は引き続きraw校正の0.5度刻み選択から作り、測定格子と校正1300〜1600 nm内格子の一致が必要です。設定JSONに校正値は含めず、再開時に同じ校正ファイルを再読込します。結果ZIPには校正入力、校正モデル、AQ結果と来歴を含めます。
 
 「aquap2方式PLSR」は単一数値目的変数、平均中心化・非スケーリングのkernelplsを使います。固定成分または反復adjCV誤差による自動選択、LOO/群単位CVを選びます。全Xへ前処理してからCVを行うaquap2側の計算で、学習区画内で前処理・成分選択を行うWorkbenchの外側nested CVとは異なります。自動選択に使ったCV誤差を、独立な外側性能評価として解釈しないでください。Python APIの乱数CVはRの同一seed分割を保証せず、数値照合した乱数ケースはRから書き出した具体的分割を再生した条件です。未知データ予測APIには同じ前処理済み変数空間のXを渡します。未知試料ファイルの予測UIは含みません。
+
+PLSR外れ値除外を選ぶと、同じ数値Yの群ごとに本体と同じTukey hinge判定を行い、1回除外してモデルを再学習します。LOO/群CVが対象で、除外前後のID・保持mask・件数・モデルを区別して保存します。全Xの前処理は除外後に再fitしません。上流の複数Y処理も各応答の独立PLS1であり、同時PLS2ではありません。EMSC・gap derivative・波長resampleと範囲指定detrendは通常Python APIで使えます。画面の追加前処理は全範囲detrendだけです。
 
 ## 起動
 
@@ -60,15 +62,15 @@ Web接続経路の上限は3～500試料、3～2000波長、10万行列要素、
 
 結果には実行エンジン、aquap2/Rの版、API、AQモード、Python前処理条件を記録します。`data/aquap2_vs_python_aquagram.csv` と `aquap2_comparison.json` は同一行列・試料・波長でのSD定義換算後の差を示します。実測データの妥当性やaquap2全機能の互換性を示す指標ではありません。詳細は[実行環境](docs/AQUAP2_RUNTIME.md)と[比較定義・履歴](docs/AQUAP2_COMPARISON.md)を参照してください。
 
-## 公開とアクセス認証（v1.1）
+## 公開とアクセス認証（Cloudflare Pages）
 
-公開URL: https://aquaphotomics-workbench.tkymgch.chatgpt.site/
+公開URL: https://aquaphotomics-workbench.pages.dev/ 。配布・復元手順は [Cloudflare Pages](docs/CLOUDFLARE_PAGES.md) を参照してください。
 
 共有パスワードで利用できます。ChatGPTへのログインは不要です。認証はサーバー側で行い、ReactのJS、Python、Excel用wheelを含む全アプリ資源の取得前に署名付きCookieを検証します。CookieはSecure / HttpOnly / SameSite=Strict、8時間で失効します。利用後は画面上部の「ログアウト」を使ってください。aquap2pyとWorkbench標準Pythonは測定データをブラウザー内で処理します。任意のR参照実行を選んだ場合だけ、前処理後の行列・実波長・試料ID・群名を同じPCの `127.0.0.1:8787` へ送ります。元ファイル・目的変数は送信せず、公開サイトへの解析データのアップロードも行いません。公開サイトの認証とローカルRへの接続認証は別です。
 
-`pnpm build` はViteの出力を `.client-build/` に生成し、全資源を認証Workerに内包した `dist/server/index.js` と `dist/.openai/hosting.json` を作ります。**distや.client-buildを静的ホストとして公開しないでください。** 本番はWorker ESMとして配置します。`.openai/hosting.json` の既存project_idを使用し、static設定は追加しません。
+`pnpm build:pages` は既存のSites用Workerもビルドし、同じ認証Workerを `pages-dist/_worker.js` へ配置します。Pages配布rootは `_worker.js` と全経路を対象とする `_routes.json` の2件のみです。全アプリ資源を認証Workerに内包するため、`.client-build/` 単体を静的公開しません。旧Sites用の `.openai/hosting.json` はPagesの認証設定には使いません。
 
-Sitesの本番シークレットは `SITE_PASSWORD_HASH` と `SESSION_SIGNING_KEY` の2点です。前者の書式は `pbkdf2:100000:<16-byte saltのhex>:<PBKDF2-HMAC-SHA256 32-byte digestのhex>`、後者は暗号学的乱数32-byteのhexです。平文パスワードやこれらの値をソース・.env・成果物へ保存しません。変更時は安全な入力経路で新しい値を生成し、Sitesのsecret環境変数を更新して保存済み版を再デプロイします。ハッシュまたは署名鍵を変更すると既存Cookieも失効します。環境変数がない復元直後は503でアクセスを拒否します。秘密値はアーカイブに含めないため、別環境では管理者が再設定してください。
+Pagesのproduction/previewシークレットは `SITE_PASSWORD_HASH` と `SESSION_SIGNING_KEY` の2点です。前者の書式は `pbkdf2:100000:<16-byte saltのhex>:<PBKDF2-HMAC-SHA256 32-byte digestのhex>`、後者は暗号学的乱数32-byteのhexです。平文パスワードやこれらの値をソース・.env・成果物へ保存しません。変更時は安全な入力経路で新しい値を生成し、対象Pages環境を更新して再デプロイします。ハッシュまたは署名鍵を変更すると既存Cookieも失効します。環境変数がない復元直後は503でアクセスを拒否します。秘密値はアーカイブに含めないため、別環境では管理者が再設定してください。
 
 ログインPOSTは同一Originのみ受け付け、本文サイズを制限します。誤入力は実行インスタンス内で15回/10分を上限に抑制します。この回数制限はサーバー全体で永続共有するものではありません。
 
@@ -111,7 +113,7 @@ Aquagramの「基準差・標準化なし」は前処理後の群平均を表示
 - PCAは平均中心化します。Workbench標準Pythonでは波長ごとの単位分散化を選択できます。aquap2pyとR参照実行は `scale=false` のみで、標準化を有効にすると実行を止めます。主成分の符号は実行環境で反転しても同じ解です。
 - Workbench標準Pythonの基準ありAquagramは **（各群の処理後平均 − 全体平均または対照群平均）÷全試料の母標準偏差（ddof=0）**、基準なしは前処理後の群平均です。classic／classic-diffはaquap2pyとR参照実行で標本SD（ddof=1）を使います。温度AQのAUC系にはSD除算がなく、sfcは校正中心からの測定RMS（分母n−1）を使います。モードごとの実波長/帯・基準・定義・単位・エンジンを表示・保存します。
 - 人工データは操作確認用で、水の状態・分子種や実験の有意差を示すものではありません。微分やAquagramだけで水分子種を自動判定しません。
-- PLS-DA、ブラウザー内R実行、未観測温度LOESS、bootstrap/観測数補正、利用者の任意R解析手順、aquap2の全PLSR methodには対応しません。
+- PLS-DA、ブラウザー内R実行、LOESS外挿・特異近傍、bootstrap/観測数補正、利用者の任意R解析手順、aquap2の全PLSR methodには対応しません。
 - 入力ファイルは50 MiB以下、波長列は1万列以下。解析行列は200万要素以下。速度と実際の利用可能量は端末に依存します。
 
 ## 構成

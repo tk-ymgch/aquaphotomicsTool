@@ -6,10 +6,10 @@ from typing import Any
 
 import numpy as np
 
-from .preprocessing import _finite_result, _int, _matrix, preprocess, sgolay
+from .preprocessing import _finite_result, _int, _matrix, preprocess_spectra, sgolay
 
 REFERENCE_COMMIT = "d31c1231bf71f0e73f1a630a32934602782be488"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 
 def _vector(value: Any, size: int, label: str) -> np.ndarray:
@@ -134,7 +134,8 @@ def gdmm(dataset: SpectralData, *, steps: list[dict] | None = None, components: 
     if not isinstance(dataset, SpectralData):
         raise ValueError("gdmmにはttapまたはSpectralDataで作成したデータを指定してください。")
     requested_steps = copy.deepcopy(steps) if steps is not None else []
-    transformed = preprocess(dataset.matrix, requested_steps)
+    preprocessing = preprocess_spectra(dataset.matrix, dataset.wavelengths, requested_steps)
+    transformed, wavelengths = preprocessing["matrix"], preprocessing["wavelengths"]
     def json_value(value):
         if isinstance(value, np.ndarray):
             return value.tolist()
@@ -149,17 +150,18 @@ def gdmm(dataset: SpectralData, *, steps: list[dict] | None = None, components: 
         if not isinstance(temperature, dict):
             raise ValueError("温度校正Aquagramには校正モデルと明示設定を指定してください。")
         from .temperature import temperature_aquagram
-        aquagram = temperature_aquagram(transformed, dataset.wavelengths, dataset.groups, **temperature)
+        aquagram = temperature_aquagram(transformed, wavelengths, dataset.groups, **temperature)
     else:
-        aquagram = classic_aquagram(transformed, dataset.wavelengths, dataset.groups,
+        aquagram = classic_aquagram(transformed, wavelengths, dataset.groups,
                                    aquagram_wavelengths, reference, aq_smooth_n)
-    result = {"preprocessed": transformed.tolist(), "pca": pca(transformed, components),
+    result = {"preprocessed": transformed.tolist(), "wavelengths": wavelengths.tolist(),
+            "preprocessingModels": json_value(preprocessing["models"]), "pca": pca(transformed, components),
             "aquagram": aquagram,
             "provenance": {"engine": "aquap2py", "version": VERSION, "implementation": "numpy-scipy",
                            "rExecuted": False, "rPackageApiExecuted": False,
                            "referenceAquap2Version": "0.4.5", "referenceCommit": REFERENCE_COMMIT,
                            "steps": json_value(requested_steps), "snvDdof": 1, "sgTs": 1,
-                           "irregularWavelengthPolicy": "sample-index-without-resampling",
+                           "irregularWavelengthPolicy": "explicit-resample-only; SG uses sample index",
                            "pcaCenter": True, "pcaScale": False, "aquagramDdof": aquagram.get("ddof"),
                            "aquagramSmoothN": temperature.get("smooth_n", 21) if temperature else aq_smooth_n,
                            "aquagramInternalMsc": temperature.get("msc", False) if temperature else False,
@@ -169,7 +171,7 @@ def gdmm(dataset: SpectralData, *, steps: list[dict] | None = None, components: 
         if not isinstance(plsr, dict):
             raise ValueError("PLSRには数値目的変数と明示設定を指定してください。")
         from .plsr import plsr as native_plsr
-        result["plsr"] = native_plsr(transformed, **plsr)
+        result["plsr"] = native_plsr(transformed, **({"sample_ids":list(dataset.ids), **plsr}))
         result["provenance"]["supportedModels"].append("plsr")
     return result
 

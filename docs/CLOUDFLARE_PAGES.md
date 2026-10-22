@@ -1,6 +1,6 @@
 # Cloudflare Pagesへの配布
 
-v1.6.1のUI・ブラウザーPython解析・認証を維持したまま、既存のModule WorkerをPages advanced modeの`_worker.js`として配布します。数値エンジンや解析設定の形式は変更しません。
+v1.6.1で移行した認証付きModule WorkerをPages advanced modeの`_worker.js`として引き続き配布します。v1.7.0ではUIの基調を維持し、aquap2py 0.3.0の温度LOESS・追加前処理・PLSR外れ値処理を追加しました。設定schema1を維持し、旧設定の読込にも対応します。
 
 ## ビルドと検証
 
@@ -32,7 +32,7 @@ PagesプロジェクトのProductionと、公開する場合はPreviewの双方�
 | `SITE_PASSWORD_HASH` | `pbkdf2:100000:<16-byte saltの小文字hex>:<32-byte SHA-256導出値の小文字hex>` |
 | `SESSION_SIGNING_KEY` | 32-byteの乱数を小文字hexで表した64文字 |
 
-既存の共有パスワードを変えず、既存ハッシュを安全に移すか、同じパスワードから新しいsaltでハッシュを生成します。署名鍵は移行先用の乱数を設定できます。新しいドメインではCookieを共有しないため、利用者は同じパスワードで再ログインします。認証Cookieの有効期間8時間、HttpOnly・Secure・SameSite=Strict、全応答の`private, no-store`は既存と共通です。両Secretsが正しく設定されない環境は503で停止します。
+共有パスワードはユーザーが指定した現在の値から新しいsaltでハッシュを生成し、公式Wrangler CLIの標準入力を使って設定します。変更時は署名鍵も新しい乱数へ更新し、再デプロイ後に新しいパスワードの受理と以前のパスワードの拒否を確認します。秘密値をファイル・ログへ保存しません。利用者は指定された現在のパスワードで再ログインします。認証Cookieの有効期間8時間、HttpOnly・Secure・SameSite=Strict、全応答の`private, no-store`は既存と共通です。両Secretsが正しく設定されない環境は503で停止します。
 
 Secretsを設定した後、`pages-dist/`をWranglerの`pages deploy`でアップロードします。Pagesプロジェクト名とProduction branchは対象プロジェクトの値を明示し、別プロジェクトへ誤配布しないようにします。
 
@@ -44,7 +44,7 @@ Direct Uploadはローカルで検証した成果物をそのまま公開する�
 
 ## 公開後の確認
 
-Production URLでログイン画面、誤ったパスワードの拒否、既存パスワードでのログイン、サンプル読込、前処理・PCA・Aquagram・PLS、結果保存、ログアウトを確認します。ログアウト状態でPython・JS・wheelの直URLが401になることと、認証後の資産SHA-256がローカルビルドと一致することを確認します。公開先URL、deployment ID、検証結果はプロジェクトの引継ぎ記録へ保存します。
+Production URLでログイン画面、誤ったパスワードの拒否、指定された現在のパスワードでのログイン、サンプル読込、前処理・PCA・Aquagram・PLS、結果保存、ログアウトを確認します。ログアウト状態でPython・JS・wheelの直URLが401になることと、認証後の資産SHA-256がローカルビルドと一致することを確認します。公開先URL、deployment ID、検証結果はプロジェクトの引継ぎ記録へ保存します。
 
 任意のローカルR/aquap2連携を使う場合は、`bridge/serve.py`の許可Originへ実際のProduction URLのOrigin（`https://<公開ホスト名>`）を明示してからbridgeを再起動します。既存のSites Originは維持し、ワイルドカードで許可範囲を広げません。通常のブラウザーPython解析にはbridgeは不要です。保存済み解析設定・結果ファイルは引き続き利用できます。
 

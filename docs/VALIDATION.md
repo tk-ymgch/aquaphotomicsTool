@@ -1,5 +1,27 @@
 # 検証記録
 
+## v1.7.0：aquap2py 0.3.0のLOESS・追加前処理・PLSR外れ値
+
+2026-10-23の追加検証です。固定したインストール済みaquap2 **0.4.5 / d31c1231bf71f0e73f1a630a32934602782be488** の公開APIへ同じ生の人工入力を渡しました。限定source harness・R関数の差替えは使っていません。通常のブラウザー解析は引き続きRを実行せず、`currentRunComparedWithR=false` です。下の旧版各節のsource SHA・条件数は当時の証拠として保持します。
+
+| v1.7の正本 | 条件・比較件数 | 結果と最大絶対差 |
+| --- | --- | --- |
+| [基礎前処理/PCA/classic](../qa/v1.7-classic-release-verification.json) | 12条件・60数値チェック | SG/SNV/MSCの順序・端点、PCA符号整列、classic/diff。各reportの誤差とsource SHAを記録 |
+| [追加前処理4系](../qa/v1.7-preprocessing-verification.json) | 35条件・26,109値 | PASS。matrix 1.9437e-13、波長2.2737e-13 |
+| [温度AQ・LOESS](../qa/v1.7-temperature-final-verification.json) | 86条件・3,438値、うちLOESS60条件 | PASS。2.8113e-7、最大許容幅比0.02638 |
+| [PLSR既存経路の再照合](../qa/v1.7-plsr-original-release-verification.json) | 13条件・433チェック・21,208値 | PASS。4.9977e-10。各caseにpublic getterを加え旧420から433チェックへ増加 |
+| [PLSR外れ値・再学習](../qa/v1.7-plsr-outlier-release-verification.json) | 8条件・280チェック・25,940値 | PASS。7.7074e-10、最大許容幅比0.02353 |
+
+PLSRの2正本は合計21条件・713チェック・47,148値です。配列/指標のチェック件数とscalar値数を区別します。追加前処理matrixの事前許容はatol1e-9/rtol1e-8、波長はatol1e-10/rtol1e-12、温度AQはatol1e-8/rtol1e-7、PLSRは絶対/相対とも1e-8です。許容幅比は `abs(Python−R)/(atol+rtol*abs(R))` の最大値で、1以下を合格とします。
+
+LOESSは既存の校正schema1の温度別AUC表から計算し、観測値shortcutと、片端未観測なら両端を予測する本体分岐を保ちます。quadratic/span .75/symmetric/4 fits/default interpolate・cell .2の1D計算をNumPyへ移植しました。12/15帯、全10モード、未観測端点/Texp、内側境界、不等間隔の8/12/21温度、人工校正平均外れ値を含みます。外挿、8未満、特異近傍、校正outlier除去、bootstrap/観測数補正は未対応です。別の[primitive診断](../qa/v1.7-temperature-loess-primitive-verification.json)はR statsの8予測に最大5.33e-15で一致しますが、正式aquap2 APIの86条件の代わりには使いません。
+
+追加前処理は公開 `do_detrend/do_emsc/do_gapDer/do_resampleNIR` の行列・波長を比較しました。detrendのsource/targetとnull指定、EMSCの1/2効果、gapDerのvalid短縮、linear/constant/nearest/PCHIP/not-a-knotを対象にしています。特異EMSC・外挿等のguard差はreportへ記録します。UIに追加するのは全範囲detrendで、他3系と範囲指定はPython APIのみです。RのS4/settings/exportModel全契約は検証済みとしません。
+
+PLSRは同じ数値Yの群ごとのTukey hinge判定、保持mask/元行対応、1回除外後の固定/自動成分、LOO/群CVの再学習、係数・CV/adjCV・校正値・処理済未知X予測を比較しました。元factor水準順を保持し、全Xへ適用した前処理は除外後に再fitしません。上流の複数Y処理は独立PLS1の個別処理で、同時PLS2ではありません。乱数/replayと除外の併用、全CV群の消失、R乱数系列の同一性、未知rawの自動前処理は未対応です。
+
+機械可読の件数は64入口・46機能群の[coverage](../python/aquap2py/coverage.json)から計算します。13入口がpartial、25機能群が条件限定の部分実装/照合ありで、全API・S4の完全互換を示すflagはfalseです。R oracleは計算上の追加範囲の証拠です。アプリ全回帰・公開認証・ブラウザー操作/ZIP照合の結果は別の版付きQAで確認し、実測研究データの科学的妥当性へ読み替えません。
+
 ## v1.6.1：無名の先頭試料列を持つ測定CSV
 
 先頭列の見出しが空欄で、他に3列以上の波長見出しがあるCSV/Excelは、先頭列に衝突しない`sample_id`名を補います。試料名・全測定値・メタデータを保持し、補完を読込画面と結果の来歴へ記録します。内部の空欄見出し、重複見出し、不正な列数の拒否は維持します。CSV/Excelの生成ID列は先頭ゼロやNA等の文字列IDを保持し、測定列の欠損処理は変更しません。

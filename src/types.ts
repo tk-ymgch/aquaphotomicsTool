@@ -38,6 +38,7 @@ export interface NativeAquagramConfig {
 export interface NativePLSRConfig {
   enabled: boolean; targetColumn: string | null; components: number | null;
   validation: 'LOO' | 'group'; cvGroupColumn: string | null;
+  excludeOutliers?: boolean; outlierRange?: number;
 }
 export interface NativePLSRResult {
   schemaVersion: number; algorithm: string; selectedComponents: number;
@@ -51,6 +52,7 @@ export interface NativePLSRResult {
   model: Record<string, unknown>; modelPlus: Record<string, unknown>;
   settings: Record<string, unknown>; provenance: Record<string, unknown>;
   warnings: string[]; definition: string;
+  retainedIndices?: number[]; excludedIndices?: number[]; excludedIds?: string[];
 }
 export type AnalysisEngine = 'python' | 'aquap2' | 'aquap2py';
 export interface CompatibilityReport {
@@ -75,6 +77,7 @@ export interface AnalysisConfig {
   pls?: PLSConfig;
   nativeAquagram?: NativeAquagramConfig;
   nativePlsr?: NativePLSRConfig;
+  nativePreprocessing?: {detrend: boolean};
 }
 export interface AnalysisResult {
   metadata: {samples: number; variables: number; groups: string[]; range: [number, number]; warnings: string[]; settings: AnalysisConfig; execution?: ExecutionRecord; compatibilityReport?: CompatibilityReport};

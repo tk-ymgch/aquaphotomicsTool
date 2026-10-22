@@ -1074,6 +1074,10 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
         sys.path.insert(0, str(sibling))
     import aquap2py as port
     native_aq, native_plsr = _native_settings(config)
+    extra = config.get("nativePreprocessing")
+    if extra is not None and (not isinstance(extra, dict) or set(extra) != {"detrend"} or not isinstance(extra.get("detrend"), bool)):
+        raise ValueError("追加前処理は直線detrendの有効・無効だけを指定してください。")
+
 
     if config.get("missing", "error") != "error":
         raise ValueError("aquap2pyの初版は欠損補完に未対応です。欠損があれば停止を選択してください。")
@@ -1123,10 +1127,14 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
         applied["nativeAquagram"] = copy.deepcopy(native_aq)
     if native_plsr is not None:
         applied["nativePlsr"] = copy.deepcopy(native_plsr)
+    if extra is not None:
+        applied["nativePreprocessing"] = {"detrend": extra["detrend"]}
     scatter_steps = [{"method": scatter}] if scatter != "none" else []
     sg_steps = ([{"method": "sgolay", "window": window, "polyorder": polyorder,
                   "derivative": derivative, "delta": 1}] if smooth or derivative else [])
     steps = sg_steps + scatter_steps if mode == "legacy-python" else scatter_steps + sg_steps
+    if extra and extra["detrend"]:
+        steps.insert(0, {"method":"detrend"})
     dataset = port.ttap(spectrum["raw"], spectrum["wavelengths"], spectrum["ids"], spectrum["groups"])
     temperature_options, calibration_model = None, None
     if native_aq and native_aq["enabled"]:
@@ -1163,6 +1171,7 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
             raise ValueError("PLSRのCV群列に欠損値があります。")
         plsr_options = {"y":pd.to_numeric(df[target],errors="coerce").to_numpy(dtype=float),
             "ncomp":native_plsr["components"], "validation":native_plsr["validation"],
+            "exclude_outliers":native_plsr.get("excludeOutliers",False), "outlier_range":native_plsr.get("outlierRange",0.5),
             "cv_groups":df[cv_column].astype(str).tolist() if native_plsr["validation"] == "group" else None}
     cube = port.gdmm(dataset, steps=steps, components=applied["components"],
                      aquagram_wavelengths=result["aquagram"]["wavelengths"],
@@ -1196,14 +1205,19 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
         "SNVは標本SD（ddof=1）、SG微分の間隔は列位置1です。波長nmあたりへ換算せず、不等間隔も補間しません。"]
     if temperature_options:
         warnings.extend(result["aquagram"].get("warnings", []))
-        warnings.append("温度校正Aquagramは観測温度のTCalib両端・Texpに限定。未観測温度のloess、校正外れ値除去・bootstrapは未移植です。")
+        warnings.append("未観測の校正温度は範囲内・8水準以上のrobust LOESSに対応。校正外れ値の行除去・bootstrap・観測数補正は未移植です。")
         if scatter != "none" or derivative:
             warnings.append("測定側の散乱補正・微分と校正吸光度の尺度を確認してください。校正側へ同じ前処理を自動適用していません。")
     else:
         warnings.append("Aquagram内部は恒等SG3・MSCなしの明示条件です。aquap2既定のSG21・内部MSCありとは区別してください。")
     if "plsr" in cube:
         native_result = copy.deepcopy(cube["plsr"])
-        native_result.update(targetColumn=native_plsr["targetColumn"],ids=spectrum["ids"],groups=spectrum["groups"])
+        retained = native_result.get("outlierFiltering", {}).get("retainedIndices", list(range(len(spectrum["ids"]))))
+        excluded = native_result.get("outlierFiltering", {}).get("excludedIndices", [])
+        native_result["retainedIndices"], native_result["excludedIndices"] = retained, excluded
+        native_result.update(targetColumn=native_plsr["targetColumn"],
+            ids=[spectrum["ids"][i] for i in retained], groups=[spectrum["groups"][i] for i in retained],
+            excludedIds=[spectrum["ids"][i] for i in excluded])
         result["nativePlsr"] = native_result
         warnings.extend(native_result.get("warnings", []))
     if not np.allclose(np.diff(spectrum["wavelengths"]), np.diff(spectrum["wavelengths"])[0]):
@@ -1231,7 +1245,7 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
     requested = {key: copy.deepcopy(value) for key, value in config.items() if key in set(applied)}
     if "pls" in requested:
         requested["pls"] = copy.deepcopy(applied["pls"])
-    for key in ("nativeAquagram", "nativePlsr"):
+    for key in ("nativeAquagram", "nativePlsr", "nativePreprocessing"):
         if key in requested:
             requested[key] = copy.deepcopy(applied[key])
     provenance = {**before, "engineVersion": "aquap2py-"+port.__version__, "execution": execution,
@@ -1242,7 +1256,7 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
         "sgDelta": 1 if sg_steps else None, "snvDdof": 1 if scatter == "snv" else None,
         "interpolated": False, "irregularWavelengthPolicy": "column-position-without-interpolation",
         "legacyCompatibilityScope": "処理モードは移植版の適用順のみを選択する。Workbench旧Pythonの数値互換を意味しない。",
-        "mscReference": ("SG処理後の全試料平均スペクトル" if mode == "legacy-python" else "元の全試料平均スペクトル") if scatter == "msc" else None,
+        "mscReference": (("直線detrend・SG処理後の全試料平均スペクトル" if mode == "legacy-python" else "直線detrend後の全試料平均スペクトル") if extra and extra["detrend"] else ("SG処理後の全試料平均スペクトル" if mode == "legacy-python" else "元の全試料平均スペクトル")) if scatter == "msc" else None,
         "numericalBackend": "NumPy SVD / SciPy FIR / independently implemented aquap2py",
         "pcaMean": processed.mean(axis=0).tolist(), "pcaProcessedMean": processed.mean(axis=0).tolist(),
         "aquagramDefinition": result["aquagram"]["definition"], "warnings": warnings,
@@ -1254,12 +1268,13 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
         "data/aquagram.csv": _csv(pd.DataFrame(aq_rows)),
         "settings.json": json.dumps({**applied, "_provenance": provenance}, ensure_ascii=False, indent=2, allow_nan=False),
         "aquap2py_runtime.json": json.dumps(runtime, ensure_ascii=False, indent=2, allow_nan=False),
+        "preprocessing_models.json": json.dumps(cube.get("preprocessingModels", []), ensure_ascii=False, indent=2, allow_nan=False),
         "compatibility-report.json": json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False),
         "README.txt": "aquap2py "+port.__version__+" / 非公式・部分移植\n前処理・PCA・AquagramをPythonで実行。R本体APIは実行していません。\n"
             + (ARTIFICIAL+"の解析です。実験結果ではありません。\n" if before.get("source", {}).get("artificial") else "")
             + result["aquagram"]["definition"] + "\nSGは列位置間隔1、不等間隔補間なし。適用条件はruntime JSONを参照してください。\n"
             + "完全対応ではありません。compatibility-report.jsonの実装/検証/未対応を確認してください。\n"
-            + "Workbenchのnested PLSとaquap2方式PLSRは別実装です。温度校正/AUC/PLSRも条件限定、loess/分類/装置別IOの完全対応ではありません。\n"
+            + "Workbenchのnested PLSとaquap2方式PLSRは別実装です。温度校正/AUC/PLSR・LOESSも条件限定、bootstrap/分類/装置別IOの完全対応ではありません。\n"
             + "data/input.csvは元の表、preprocessed.csvは移植版の適用値です。原著者・参照版・ライセンスは同梱のaquap2py/を参照。\n",
         "aquap2py/NOTICE.md": importlib.resources.files("aquap2py").joinpath("NOTICE.md").read_text(encoding="utf-8"),
         "aquap2py/LICENSE": importlib.resources.files("aquap2py").joinpath("LICENSE").read_text(encoding="utf-8"),
@@ -1271,9 +1286,12 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFra
     if "nativePlsr" in result:
         native = result["nativePlsr"]
         result["exports"]["native_plsr_model.json"] = json.dumps(native,ensure_ascii=False,indent=2,allow_nan=False)
-        result["exports"]["data/native_plsr_predictions.csv"] = _csv(pd.DataFrame({"sample_id":spectrum["ids"],"group":spectrum["groups"],
+        result["exports"]["data/native_plsr_predictions.csv"] = _csv(pd.DataFrame({"sample_id":native["ids"],"group":native["groups"],
             "observed":native["observed"],"predicted_cv":native["predictedCV"],"predicted_calibration":native["predictedCalibration"],
             "residual_cv":native["residuals"],"fold":native["fold"]}))
+        result["exports"]["data/native_plsr_exclusions.csv"] = _csv(pd.DataFrame({
+            "original_row_index":native["excludedIndices"], "sample_id":native["excludedIds"],
+            "group":[spectrum["groups"][i] for i in native["excludedIndices"]]}))
         result["exports"]["data/native_plsr_curve.csv"] = _csv(pd.DataFrame(native["curve"]))
         result["exports"]["data/native_plsr_coefficients.csv"] = _csv(pd.DataFrame({"wavelength_nm":spectrum["wavelengths"],"coefficient":native["coefficients"]["values"]}))
         result["exports"]["README.txt"] += "\n"+native["definition"]+"\n自動選択に使ったCV誤差を、独立な外側CV性能とは扱いません。未知予測APIは同じ前処理済み波長列を受け取ります。\n"
@@ -1316,9 +1334,14 @@ def _native_settings(config):
         source = config["nativePlsr"]
         if not isinstance(source, dict):
             raise ValueError("aquap2方式PLSR設定を確認してください。")
-        plsr = {key:copy.deepcopy(value) for key,value in source.items() if key in {"enabled","targetColumn","components","validation","cvGroupColumn"}}
+        plsr = {key:copy.deepcopy(value) for key,value in source.items() if key in {"enabled","targetColumn","components","validation","cvGroupColumn","excludeOutliers","outlierRange"}}
         if not isinstance(plsr.get("enabled"), bool) or plsr.get("validation") not in ("LOO","group"):
             raise ValueError("PLSRの有効設定・CV方式を確認してください。")
+        if not isinstance(plsr.get("excludeOutliers", False), bool):
+            raise ValueError("PLSR外れ値除外は有効・無効で指定してください。")
+        outlier_range = _finite(plsr.get("outlierRange", 0.5), "PLSR外れ値範囲")
+        if not 0 <= outlier_range <= 10:
+            raise ValueError("PLSR外れ値範囲は0〜10にしてください。")
         if plsr.get("components") is not None:
             plsr["components"] = _integer(plsr["components"],"PLSR成分数",1)
             if plsr["components"] > 30:

@@ -220,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(503, {'error': 'R/aquap2環境を確認できません。ローカルサービスの設定を確認してください。'})
 
     def read_json(self):
-        if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json':
+        if self.headers.get('Transfer-Encoding'):
             raise InputError('application/jsonで送信してください。')
         try:
             length = int(self.headers.get('Content-Length', '-1'))
@@ -229,7 +229,13 @@ class Handler(BaseHTTPRequestHandler):
         if not 0 <= length <= MAX_BODY:
             raise InputError('送信データは8 MiB以下にしてください。')
         self.connection.settimeout(15)
-        return json.loads(self.rfile.read(length).decode('utf-8'), parse_constant=lambda _: (_ for _ in ()).throw(InputError('有限値が必要です。')))
+        body = self.rfile.read(length)
+        # Drain this bounded body before rejecting its media type. Closing a
+        # Windows socket with unread request bytes can reset it before the
+        # client receives the intended HTTP 400 response.
+        if self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json':
+            raise InputError('application/jsonで送信してください。')
+        return json.loads(body.decode('utf-8'), parse_constant=lambda _: (_ for _ in ()).throw(InputError('有限値が必要です。')))
 
     def authenticated(self):
         token = self.headers.get('Authorization', '')

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "implementation": {
     "name": "aquap2py",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "unofficial": true
   },
   "reference": {
@@ -55,35 +55,38 @@
     {
       "name": "do_detrend",
       "kind": "function",
-      "status": "not-implemented",
-      "notes": "source/target波長範囲を指定したデトレンド。",
+      "status": "partial",
+      "notes": "Matrix/波長のsource/target線形detrend。UIは全範囲のみ。S4/settings/exportModel全互換なし。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L479",
-      "referenceSignature": "as.pairlist(alist(dataset = , src = NULL, trg = \"src\", exportModel = FALSE))"
+      "referenceSignature": "as.pairlist(alist(dataset = , src = NULL, trg = \"src\", exportModel = FALSE))",
+      "pythonBinding": "detrend"
     },
     {
       "name": "do_dptSeq",
       "kind": "function",
       "status": "partial",
-      "notes": "Python数値binding: preprocess（Rと同名の公開APIではない）。dpt文字列の順序実行。初版対象はsgol/snv/mscのみ。",
+      "notes": "Python数値binding preprocess/preprocess_spectra。SG/SNV/MSCとdetrend/EMSC/gapDer/resampleの順序・波長変更を扱う。任意R dpt文字列/S4/settings/exportModel全契約なし。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L529",
       "referenceSignature": "as.pairlist(alist(dataset = , dptSeq = , extraModelList = NULL, silent = TRUE))",
-      "pythonBinding": "preprocess"
+      "pythonBinding": "preprocess_spectra"
     },
     {
       "name": "do_emsc",
       "kind": "function",
-      "status": "not-implemented",
-      "notes": "1～2本のloading/回帰ベクトルによるEMSC。",
+      "status": "partial",
+      "notes": "全X平均referenceと1/2外部効果の数値EMSC。Python APIのみ。S4/外部R model/exportModel全互換なし。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L285",
-      "referenceSignature": "as.pairlist(alist(dataset = , vecLoad = NULL, exportModel = FALSE))"
+      "referenceSignature": "as.pairlist(alist(dataset = , vecLoad = NULL, exportModel = FALSE))",
+      "pythonBinding": "emsc"
     },
     {
       "name": "do_gapDer",
       "kind": "function",
-      "status": "not-implemented",
-      "notes": "prospectr::gapDerの次数/窓/segment/deltaWと波長端の処理。",
+      "status": "partial",
+      "notes": "m=1..4とgap/segment/delta_wの数値演算。実R通りvalid短縮して波長を返す。Python APIのみ。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L350",
-      "referenceSignature": "as.pairlist(alist(dataset = , m = 1, w = 1, s = 1, deltaW = , exportModel = FALSE))"
+      "referenceSignature": "as.pairlist(alist(dataset = , m = 1, w = 1, s = 1, deltaW = , exportModel = FALSE))",
+      "pythonBinding": "gap_derivative"
     },
     {
       "name": "do_msc",
@@ -97,10 +100,11 @@
     {
       "name": "do_resampleNIR",
       "kind": "function",
-      "status": "not-implemented",
-      "notes": "pracma::interp1のmethod/targetWls/tbyと列名更新。",
+      "status": "partial",
+      "notes": "linear/constant/nearest/PCHIP(cubic)/not-a-knot(spline)の内部範囲補間。Python APIのみ。外挿・全S4契約なし。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r#L562",
-      "referenceSignature": "as.pairlist(alist(dataset = , targetWls = NULL, tby = 0.5, method = get(\"stn\", envir = .ap2)$gen_resample_method))"
+      "referenceSignature": "as.pairlist(alist(dataset = , targetWls = NULL, tby = 0.5, method = get(\"stn\", envir = .ap2)$gen_resample_method))",
+      "pythonBinding": "resample_nir"
     },
     {
       "name": "do_sgolay",
@@ -140,7 +144,7 @@
       "name": "gdmm",
       "kind": "function",
       "status": "partial",
-      "notes": "単一SpectralDataからSG/SNV/MSC→PCA/AQ/限定PLS1を計算。temperature/plsr構造化引数を使うPython固有境界。R全cube/metadata/任意ap互換ではない。",
+      "notes": "単一SpectralDataから7系の数値前処理→PCA/AQ/限定PLS1を計算。温度LOESS/PLSR外れ値を構造化引数で指定。全cube/metadata/任意R ap互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_generateDatasets.r#L1566",
       "referenceSignature": "as.pairlist(alist(dataset = , ap = getap(), noiseFile = \"def\", tempFile = \"def\"))",
       "pythonBinding": "gdmm"
@@ -278,10 +282,11 @@
     {
       "name": "pls_outlier_getIndices",
       "kind": "function",
-      "status": "not-implemented",
-      "notes": "cubeのPLSR誤差範囲からoutlier indexを取得。",
+      "status": "partial",
+      "notes": "同じ数値Yの群ごとのTukey hinge判定と保持mask/元行対応。LOO/群CV、1回除外・再学習。R全cube/getter構造は未対応。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_plsr.r#L881",
-      "referenceSignature": "as.pairlist(alist(cube = , detRange = 0.5))"
+      "referenceSignature": "as.pairlist(alist(cube = , detRange = 0.5))",
+      "pythonBinding": "plsr_outlier_indices"
     },
     {
       "name": "printStdColnames",
@@ -523,9 +528,9 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "現版0.2.0の再照合。人工24試料×61波長のmatrix/ID/群/実波長の往復と行順。3群の不均等n・予約名global・日本語/引用符/改行labelを含む。R S4 slot/metadata全互換は対象外。",
-        "reportId": "qa/v1.6-classic-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0の正式R公開gdmm再照合。人工24×61、12条件60数値check、SG/SNV/MSCと両順序、PCA符号整列、classic/diff。各featureはこの限定profileのみ。 人工24試料×61波長のmatrix/ID/群/実波長の往復と行順。3群の不均等n・予約名global・日本語/引用符/改行labelを含む。R S4 slot/metadata全互換は対象外。",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "implementationVersion": "0.3.0"
       },
       "notes": "9 S4 classes・6 class unions・68 method definitionsの全再現ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cl_classDefs.r"
@@ -573,11 +578,14 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "現版0.2.0の再照合。同じ生matrixをPythonと導入済R 0.4.5の公開gdmm dpt.preへ入力。未処理、SNV、MSC、SGおよびSGとSNV/MSCの両順序、不等間隔の無補間を含む12条件。全cube/dpt.pre/postは対象外。",
-        "reportId": "qa/v1.6-classic-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0の正式R公開gdmm再照合。人工24×61、12条件60数値check、SG/SNV/MSCと両順序、PCA符号整列、classic/diff。各featureはこの限定profileのみ。 同じ生matrixをPythonと導入済R 0.4.5の公開gdmm dpt.preへ入力。未処理、SNV、MSC、SGおよびSGとSNV/MSCの両順序、不等間隔の無補間を含む12条件。全cube/dpt.pre/postは対象外。",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "implementationVersion": "0.3.0",
+        "relatedReportIds": [
+          "qa/v1.7-preprocessing-verification.json"
+        ]
       },
-      "notes": "構造化stepsでSG/SNV/MSCを順序実行。PCA/AQ/PLS1への単一setを対象。全cube/dpt.pre/post/metadata互換は未実装。",
+      "notes": "7系の構造化stepsを順序実行し、preprocess_spectraが変化後の波長とPython診断modelを返す。UI追加は全範囲detrendのみ。全cube/dpt.pre/post/metadata互換なし。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_generateDatasets.r"
     },
     {
@@ -587,9 +595,9 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "現版0.2.0の再照合。signal 1.8-1を使うR gdmm dpt.preとの全61列・端点を含む比較。p=2、n=21/m=0とn=11/m=0/1/2、ts=1。非等間隔列も列位置演算。全p/n/微分次数・nm間隔指定は対象外。",
-        "reportId": "qa/v1.6-classic-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0の正式R公開gdmm再照合。人工24×61、12条件60数値check、SG/SNV/MSCと両順序、PCA符号整列、classic/diff。各featureはこの限定profileのみ。 signal 1.8-1を使うR gdmm dpt.preとの全61列・端点を含む比較。p=2、n=21/m=0とn=11/m=0/1/2、ts=1。非等間隔列も列位置演算。全p/n/微分次数・nm間隔指定は対象外。",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "implementationVersion": "0.3.0"
       },
       "notes": "signal::sgolay/sgolayfilt、ts=1、端点・derivativeを対象。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
@@ -601,9 +609,9 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "現版0.2.0の再照合。R公開gdmm dpt.preのSNV（行内標本SD ddof=1）と単独/SG前後で比較。人工24×61、定数スペクトル1条件の双方拒否。欠損回復・全退化条件は対象外。",
-        "reportId": "qa/v1.6-classic-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0の正式R公開gdmm再照合。人工24×61、12条件60数値check、SG/SNV/MSCと両順序、PCA符号整列、classic/diff。各featureはこの限定profileのみ。 R公開gdmm dpt.preのSNV（行内標本SD ddof=1）と単独/SG前後で比較。人工24×61、定数スペクトル1条件の双方拒否。欠損回復・全退化条件は対象外。",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "implementationVersion": "0.3.0"
       },
       "notes": "行方向meanと標本SD(ddof=1)。Workbench標準のddof=0とは別。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
@@ -615,9 +623,9 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "現版0.2.0の再照合。R公開gdmm dpt.pre/pls 2.9-0 MSCと全試料平均参照で単独/SG前後を比較。人工24×61。外部参照vector/model・特異回帰条件のR互換は未照合。",
-        "reportId": "qa/v1.6-classic-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0の正式R公開gdmm再照合。人工24×61、12条件60数値check、SG/SNV/MSCと両順序、PCA符号整列、classic/diff。各featureはこの限定profileのみ。 R公開gdmm dpt.pre/pls 2.9-0 MSCと全試料平均参照で単独/SG前後を比較。人工24×61。外部参照vector/model・特異回帰条件のR互換は未照合。",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "implementationVersion": "0.3.0"
       },
       "notes": "pls::mscの平均/明示参照。外部model/exportModel全契約は未対応。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
@@ -625,49 +633,57 @@
     {
       "id": "emsc",
       "label": "EMSC",
-      "implemented": false,
-      "status": "not-implemented",
+      "implemented": true,
+      "status": "partial",
       "oracleValidation": {
-        "status": "not-applicable",
-        "scope": "未実装・未照合"
+        "status": "verified",
+        "scope": "0.3.0、導入済み固定R公開do_detrend/do_emsc/do_gapDer/do_resampleNIR、同じ生人工入力35条件26109値。matrix atol1e-9/rtol1e-8、波長atol1e-10/rtol1e-12。R S4/settings/exportModel全契約は対象外。 全X平均referenceと1/2外部効果。",
+        "reportId": "qa/v1.7-preprocessing-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "notes": "Python APIのみ。数値最小二乗、特異行列・0傾きを拒否。外部R modelの往復なし。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
     },
     {
       "id": "gapder",
       "label": "gap-segment derivative",
-      "implemented": false,
-      "status": "not-implemented",
+      "implemented": true,
+      "status": "partial",
       "oracleValidation": {
-        "status": "not-applicable",
-        "scope": "未実装・未照合"
+        "status": "verified",
+        "scope": "0.3.0、導入済み固定R公開do_detrend/do_emsc/do_gapDer/do_resampleNIR、同じ生人工入力35条件26109値。matrix atol1e-9/rtol1e-8、波長atol1e-10/rtol1e-12。R S4/settings/exportModel全契約は対象外。 m1..4、gap/segmentと端点短縮を含む。",
+        "reportId": "qa/v1.7-preprocessing-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "notes": "Python APIのみ。valid短縮後の波長を返し、実Rで無効な端点複製は行わない。delta_w明示。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
     },
     {
       "id": "detrend",
       "label": "detrend",
-      "implemented": false,
-      "status": "not-implemented",
+      "implemented": true,
+      "status": "partial",
       "oracleValidation": {
-        "status": "not-applicable",
-        "scope": "未実装・未照合"
+        "status": "verified",
+        "scope": "0.3.0、導入済み固定R公開do_detrend/do_emsc/do_gapDer/do_resampleNIR、同じ生人工入力35条件26109値。matrix atol1e-9/rtol1e-8、波長atol1e-10/rtol1e-12。R S4/settings/exportModel全契約は対象外。 source/target/null指定を含む。",
+        "reportId": "qa/v1.7-preprocessing-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "notes": "UIは全範囲線形detrend。範囲指定はPython APIのみ。source/target各2点以上。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
     },
     {
       "id": "resample",
       "label": "波長resample",
-      "implemented": false,
-      "status": "not-implemented",
+      "implemented": true,
+      "status": "partial",
       "oracleValidation": {
-        "status": "not-applicable",
-        "scope": "未実装・未照合"
+        "status": "verified",
+        "scope": "0.3.0、導入済み固定R公開do_detrend/do_emsc/do_gapDer/do_resampleNIR、同じ生人工入力35条件26109値。matrix atol1e-9/rtol1e-8、波長atol1e-10/rtol1e-12。R S4/settings/exportModel全契約は対象外。 linear/constant/nearest/cubic(PCHIP)/spline(not-a-knot)。",
+        "reportId": "qa/v1.7-preprocessing-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "公式パラメータ・header/列名/モデル保持を含む互換は未実装。",
+      "notes": "Python APIのみ。SciPyの独立補間実装。外挿・未知methodは拒否。splineは4点以上。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/gen_coreDataManip.r"
     },
     {
@@ -821,9 +837,9 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "現版0.2.0の再照合。12条件で平均中心化・非標準化の先頭5成分scores/loadingsを符号整列し、寄与率を比較。人工24×61・分離した特異値。縮退/近接部分空間、全成分数/scale、R model属性は対象外。",
-        "reportId": "qa/v1.6-classic-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0の正式R公開gdmm再照合。人工24×61、12条件60数値check、SG/SNV/MSCと両順序、PCA符号整列、classic/diff。各featureはこの限定profileのみ。 12条件で平均中心化・非標準化の先頭5成分scores/loadingsを符号整列し、寄与率を比較。人工24×61・分離した特異値。縮退/近接部分空間、全成分数/scale、R model属性は対象外。",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "implementationVersion": "0.3.0"
       },
       "notes": "rw_PCAのscores/loadings/var/totalvar。符号/縮退部分空間を分けて照合。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/cube_makeModels.r"
@@ -835,11 +851,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0、installed aquap2公開gdmm。13条件/420数値check：固定/自動、LOO/群単位、SG/SNV/MSC、係数/intercept/fit/CV/adjCV/PRESS/誤差曲線。乱数固定成分1条件はR具体segments再生。R seed/乱数自動選択履歴、PLSR固有outlier除外、実測性能は対象外。",
-        "reportId": "qa/v1.6-plsr-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式gdmm/plot_pls_indepPred/getterで既存13条件433check・21208値を再照合。固定/自動、LOO/群CV、model/modelPlus、CV/adjCV/校正と処理済未知X。乱数1条件は具体的R segments再生。",
+        "reportId": "qa/v1.7-plsr-original-release-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "単一応答kernelpls・中心化/非スケーリング。反復adjCV最小成分の最頻値選択、model/modelPlus、LOO/群CV。全X前処理後CVで、外側nested性能評価ではない。R RNG同一性/PLS2/他methodは未対応。",
+      "notes": "単一応答PLS1/kernelpls・中心化/非スケーリング。全X前処理後のLOO/群CVと反復adjCV成分選択。上流複数Yは独立PLS1で、複数応答wrapper/他method/R RNG同一性は未対応。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_plsr.r"
     },
     {
@@ -849,11 +865,14 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0、公開plot_pls_indepPredの予測値を処理済み未知Xで比較（ラベルなし未知データを含む）。13条件420checkの予測部分。outlier除外/未知raw前処理/R描画APIは未照合・未実装。",
-        "reportId": "qa/v1.6-plsr-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、公開pls_outlier_getIndicesとgdmm(pls.exOut=TRUE)の8条件280check・25940値。同値Y群Tukey hinge、保持mask、1回除外/再学習、係数・CV/adjCV・処理済未知X予測を照合。",
+        "reportId": "qa/v1.7-plsr-outlier-release-verification.json",
+        "implementationVersion": "0.3.0",
+        "relatedReportIds": [
+          "qa/v1.7-plsr-original-release-verification.json"
+        ]
       },
-      "notes": "predict_plsrは同じ前処理済みX空間の数値予測のみ。未知rawへのDPT自動適用、PLSR固有outlier除外、R描画/全metadata契約は未実装。",
+      "notes": "LOO/群CVの固定/自動成分とrange0/uniqueYを対象。全X DPTは除外後に再fitしない。乱数/replay併用・全CV群消失・未知raw自動DPT/R描画全契約は未対応。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_plsr.r"
     },
     {
@@ -887,9 +906,9 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "現版0.2.0の再照合。人工24×61・12実波長、classic/globalの標本SD ddof=1を換算せず比較。AQ内部は明示SG3/p2/m0・MSCなし、前処理条件はreport参照。温度校正/他AQ既定値/実測データは対象外。",
-        "reportId": "qa/v1.6-classic-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0の正式R公開gdmm再照合。人工24×61、12条件60数値check、SG/SNV/MSCと両順序、PCA符号整列、classic/diff。各featureはこの限定profileのみ。 人工24×61・12実波長、classic/globalの標本SD ddof=1を換算せず比較。AQ内部は明示SG3/p2/m0・MSCなし、前処理条件はreport参照。温度校正/他AQ既定値/実測データは対象外。",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "implementationVersion": "0.3.0"
       },
       "notes": "標本SDの群平均/指定群差、AQ内部のSG/MSC順を対象。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
@@ -901,9 +920,9 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "現版0.2.0の再照合。人工24×61・12実波長、classic-diffの指定対照群（予約名global群を含む）との差を標本SD ddof=1のまま比較。AQ内部SG3・MSCなし。全AQ mode/既定値は対象外。",
-        "reportId": "qa/v1.6-classic-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0の正式R公開gdmm再照合。人工24×61、12条件60数値check、SG/SNV/MSCと両順序、PCA符号整列、classic/diff。各featureはこの限定profileのみ。 人工24×61・12実波長、classic-diffの指定対照群（予約名global群を含む）との差を標本SD ddof=1のまま比較。AQ内部SG3・MSCなし。全AQ mode/既定値は対象外。",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "implementationVersion": "0.3.0"
       },
       "notes": "標本SDの群平均/指定群差、AQ内部のSG/MSC順を対象。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
@@ -915,11 +934,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。未平滑化校正平均を中心に測定RMS(n−1)で標準化、内部MSC off/on、格子一致。校正SDではない。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "未平滑化校正平均を中心に測定RMS(n−1)で標準化、内部MSC off/on、格子一致。校正SDではない。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "未平滑化校正平均を中心に測定RMS(n−1)で標準化、内部MSC off/on、格子一致。校正SDではない。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -929,11 +948,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。未平滑化校正平均を中心に測定RMS(n−1)で標準化、内部MSC off/on、格子一致。校正SDではない。指定対照群の減算。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "未平滑化校正平均を中心に測定RMS(n−1)で標準化、内部MSC off/on、格子一致。校正SDではない。指定対照群の減算。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "未平滑化校正平均を中心に測定RMS(n−1)で標準化、内部MSC off/on、格子一致。校正SDではない。指定対照群の減算。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -943,11 +962,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -957,11 +976,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -971,11 +990,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -985,11 +1004,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -999,11 +1018,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -1013,11 +1032,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -1027,11 +1046,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -1041,11 +1060,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0・人工測定12×301/校正63×301、公開ttap→saveAQdata→gdmm。TCalib両端/Texp観測済、校正SG17/測定SG21、全26条件/1026値の該当mode。固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。未観測LOESS、bootstrap/観測数補正、実測妥当性は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。TCalib両端/Texpは厳密な観測値一致。全R既定値/API互換ではない。",
+      "notes": "固定12/15帯polygon面積比、校正2端点min/max%・tn/dce変換、不等間隔/名目境界欠落を含む。SD換算なし。指定対照群の減算。観測値shortcutと限定LOESS。全R既定値/API互換ではない。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -1055,11 +1074,11 @@
       "status": "partial",
       "oracleValidation": {
         "status": "verified",
-        "scope": "0.2.0、公開ttap/saveAQdataで作成した校正をgdmmで実行。固定12/15帯、校正SG17、観測端点/Texp、全範囲/対称rangeを含む26条件。LOESS/自動outlier検出は対象外。",
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "implementationVersion": "0.2.0"
+        "scope": "0.3.0、正式ttap/saveAQdata/gdmm/getcmによる86条件3438値、うちLOESS60条件。12/15帯・全10mode、8/12/21温度、未観測端点/Texp、mixed端点、境界内、不等間隔/人工外れ値。atol1e-8/rtol1e-7。 sfc中心はraw校正の0.5度grid選択で、LOESS値を中心にしない。",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "implementationVersion": "0.3.0"
       },
-      "notes": "生校正行にSG→1300..1600cut→温度別平均→AUC表。SFC用にはraw平均/件数を保持。観測温度のみ、LOESS/outlier検出は未実装。",
+      "notes": "生校正行にSG→1300..1600cut→温度別平均→AUC表。SFC用にはraw平均/件数を保持。schema1の温度別AUC表を維持。LOESSは8水準以上・範囲内・非特異近傍。校正outlier検出は未対応。",
       "source": "https://github.com/bpollner/aquap2/blob/d31c1231bf71f0e73f1a630a32934602782be488/R/calc_aqg.r"
     },
     {
@@ -1112,22 +1131,23 @@
     }
   ],
   "limitations": [
-    "64宣言入口・46behavior全体の完全互換ではありません。各実装は条件限定partialです。",
-    "温度校正/AUCは観測済TCalib両端/Texpだけに対応。R robust quadratic LOESS、bootstrap/観測数補正、outlier検出は未実装です。",
-    "sfcは測定格子と校正の1300..1600内格子の一致が必要。AUC軸のnmは固定帯中央で、単一点吸光度ではありません。DCEは推定温度ではありません。",
-    "PLSRはPLS1/kernelpls・中心化/非スケーリング・全X前処理後CV。外側nested CVの独立性能評価ではありません。",
-    "R RNG/同一seed分割、乱数CV自動選択履歴、PLSR固有outlier除外、多応答/他method、未知rawへのDPT自動適用は未対応です。",
-    "SIMCA/分類・装置IO・任意R式/metadata・実験計画・描画/保存の全R互換は未実装。実測データの科学的妥当性は未検証です。",
-    "通常Python/ブラウザー解析はRを呼びません。開発時oracleと今回入力のR照合を区別しcurrentRunComparedWithR=falseを記録します。",
-    "0.5.1は将来の別target。0.1.0の旧report/sourceSHAは履歴で、現版全体の検証へ読み替えません。"
+    "64宣言入口・46機能群全体の完全互換ではありません。13入口/25機能群は条件限定partialで、API/S4の完全互換率ではありません。",
+    "LOESSは8水準以上・範囲内・非特異近傍だけ。外挿/特異近傍/校正outlier検出、bootstrap/観測数補正は未対応です。",
+    "UIの追加前処理は全範囲detrend。EMSC/gap derivative/resampleと範囲指定detrendはPython APIのみ。S4/settings/exportModel全契約なし。",
+    "sfcは測定格子と校正1300..1600内格子の一致が必要。AUCのnm軸は帯中央で、DCEは推定試料温度ではありません。",
+    "PLSRはPLS1/kernelpls・全X前処理後CVで、外側nested独立性能評価ではありません。上流複数Yも独立PLS1。複数応答wrapper/他methodは未対応です。",
+    "PLSR外れ値はLOO/群CVで1回除外/再学習。乱数/replayとの併用・全CV群消失・R RNG同一性・未知rawへのDPT自動適用は未対応です。",
+    "SIMCA/分類・装置IO・任意R式/metadata・実験計画・R描画/保存の全互換は未実装。実測データの科学的妥当性は未検証です。",
+    "通常のPython/ブラウザー解析はRを呼ばずcurrentRunComparedWithR=false。開発時oracleと今回入力の個別R照合は別です。",
+    "0.5.1は別target。旧0.1.0/0.2.0のreport/source SHAは履歴で、現版全体の再検証へ読み替えません。"
   ],
   "verifiedScope": [
-    "0.2.0基礎数値：人工24×61、現版R公開gdmmによる12条件60数値check。SG端点/ts1/m0/1/2、SNV/MSCと両順序、PCA符号整列、classic/classic-diff、特殊labels・不等間隔。",
-    "0.2.0温度AQ：人工測定12×301/校正63×301、26条件1026 scalar値。全10非classic mode、12/15帯、校正SG17/測定SG21、sfc内部MSC、全範囲/対称range、不等間隔band。",
-    "温度AQ最大絶対差2.5206e-8、等間隔24条件9.0564e-10。atol1e-8/rtol1e-7内。未観測LOESS/boot/random balancingは明示拒否。",
-    "0.2.0 PLSR：公開gdmm＋plot_pls_indepPred、13条件420配列/指標check。PLS1/kernelpls、固定/自動、LOO/群CV、model/modelPlus・CV/adjCV・処理済未知X予測。",
-    "PLSR最大絶対差4.9977e-10、atol1e-8/rtol1e-8内。乱数固定成分ケースはRから取り出した具体的segmentsの再生で、R seed互換ではありません。",
-    "全て人工fixtureを用いた開発時oracleです。通常のユーザー入力をRでその都度比較したことや、実測の科学的妥当性を意味しません。"
+    "0.3.0基礎：正式gdmmの生人工24×61、12条件60check。SG端点/ts1/m0..2、SNV/MSC両順序、PCA符号整列、classic/diff、特殊labels/不等間隔。",
+    "追加前処理4系：正式公開API35条件26109値。matrix最大1.9437e-13、波長最大2.2737e-13。行列/波長の部分bindingだけを検証。",
+    "温度AQ：86条件3438値（LOESS60条件）。8/12/21温度、12/15帯、全10mode、fractional/mixed端点/Texp、境界内、不等間隔と人工校正外れ値。",
+    "温度最大絶対差2.8113e-7、事前atol1e-8/rtol1e-7に対する最大許容幅比0.02638。R-defaultのrobust quadratic/interpolateを再現。",
+    "PLSR：旧13条件433check/21208値＋外れ値8条件280check/25940値。合計21条件713check/47148値、最大7.7074e-10、atol/rtol各1e-8。",
+    "本体比較は合計154条件。全て人工fixtureの開発用oracleで、通常ユーザー入力のR個別再実行や実測の科学的妥当性の確認ではありません。"
   ],
   "inventoryCounts": {
     "exportFunctions": 46,
@@ -1146,16 +1166,18 @@
     "notice": "NOTICE.md",
     "licenseFile": "LICENSE",
     "notALegalCompatibilityOpinion": true,
-    "oracleGeometryDeclared": "GPL (>=3); mathematical formula independently expressed, no vendored geometry implementation"
+    "oracleGeometryDeclared": "GPL (>=3); mathematical formula independently expressed, no vendored geometry implementation",
+    "oraclePracmaDeclared": "GPL (>=3); oracle only, independent SciPy interpolators, no vendored pracma implementation",
+    "loessAdaptation": "R stats bounded 1D algorithm; full R Core/Cleveland/Grosse/Shyu/AT&T notice retained in loess.py and NOTICE.md"
   },
   "oracleEvidence": {
-    "implementationVersion": "0.2.0",
+    "implementationVersion": "0.3.0",
     "currentRunComparedWithR": false,
     "records": [
       {
-        "reportId": "qa/v1.6-classic-verification.json",
-        "reportSha256": "ddb83effb27af4b431d3e330039e941263da9a11ba2880ecbad5770a10989d8a",
-        "implementationVersion": "0.2.0",
+        "reportId": "qa/v1.7-classic-release-verification.json",
+        "reportSha256": "5b1ceff4bd0858cd0c1c8bb93c257293f82dcee71c13a5ddc3ed065b759e4678",
+        "implementationVersion": "0.3.0",
         "sourceHarnessUsed": false,
         "installedRPackage": true,
         "artificial": true,
@@ -1172,29 +1194,62 @@
         }
       },
       {
-        "reportId": "qa/v1.6-temperature-verification.json",
-        "reportSha256": "b008bdbf76cdab8da7be1273be1e9fc25c4573c496bfe86f6a51aac02fa2a2d0",
-        "implementationVersion": "0.2.0",
+        "reportId": "qa/v1.7-preprocessing-verification.json",
+        "reportSha256": "b492d9bbd0d70167d978b4519832b06dc908137345323d00810d67b49cc036e3",
+        "implementationVersion": "0.3.0",
         "sourceHarnessUsed": false,
         "installedRPackage": true,
         "artificial": true,
         "sourceAndFixtureHashesVerified": true,
-        "runs": 26,
-        "numericValues": 1026,
-        "guards": 4,
-        "maximumAbsoluteDifference": 2.5205736164934933e-08
+        "runs": 35,
+        "numericValues": 26109,
+        "maximumAbsoluteDifferences": {
+          "matrix": 1.9437229603624928e-13,
+          "wavelengths": 2.2737367544323206e-13
+        },
+        "scope": "Matrix/wavelength binding of four public preprocessing functions; not R S4 metadata/exportModel equivalence"
       },
       {
-        "reportId": "qa/v1.6-plsr-verification.json",
-        "reportSha256": "805ba74ae8dd50720ae042e7e317e0f4277a1ed4144934255c33bcba2a032b88",
-        "implementationVersion": "0.2.0",
+        "reportId": "qa/v1.7-temperature-final-verification.json",
+        "reportSha256": "072bd24600d7d4cd0896fcf1194a9944b4706332bc1da9d745c5988d81d8b32e",
+        "implementationVersion": "0.3.0",
+        "sourceHarnessUsed": false,
+        "installedRPackage": true,
+        "artificial": true,
+        "sourceAndFixtureHashesVerified": true,
+        "runs": 86,
+        "numericValues": 3438,
+        "guards": 4,
+        "maximumAbsoluteDifference": 2.8113072403357364e-07,
+        "maximumToleranceRatio": 0.026378182508170648
+      },
+      {
+        "reportId": "qa/v1.7-plsr-original-release-verification.json",
+        "reportSha256": "316acb237609847341f79e630861a4e8b53ba822b4cf93e429e6a9914d7661dc",
+        "implementationVersion": "0.3.0",
         "sourceHarnessUsed": false,
         "installedRPackage": true,
         "artificial": true,
         "sourceAndFixtureHashesVerified": true,
         "runs": 13,
-        "numericChecks": 420,
-        "maximumAbsoluteDifference": 4.997673386242241e-10
+        "numericChecks": 433,
+        "numericValues": 21208,
+        "maximumAbsoluteDifference": 4.997673386242241e-10,
+        "maximumToleranceRatio": 0.004948787105298055
+      },
+      {
+        "reportId": "qa/v1.7-plsr-outlier-release-verification.json",
+        "reportSha256": "c627f9a37af80133d906bdcdc6097cbfd3b5d94d979c87318c64f10948431656",
+        "implementationVersion": "0.3.0",
+        "sourceHarnessUsed": false,
+        "installedRPackage": true,
+        "artificial": true,
+        "sourceAndFixtureHashesVerified": true,
+        "runs": 8,
+        "numericChecks": 280,
+        "numericValues": 25940,
+        "maximumAbsoluteDifference": 7.707412486013254e-10,
+        "maximumToleranceRatio": 0.023525074477132618
       }
     ],
     "historicalRecords": [
@@ -1218,8 +1273,58 @@
         "implementationVersion": "0.1.0",
         "historical": true,
         "sourceBinding": "old snapshot only; not the complete current package"
+      },
+      {
+        "reportId": "qa/v1.6-classic-verification.json",
+        "reportSha256": "ddb83effb27af4b431d3e330039e941263da9a11ba2880ecbad5770a10989d8a",
+        "implementationVersion": "0.2.0",
+        "sourceHarnessUsed": false,
+        "installedRPackage": true,
+        "artificial": true,
+        "sourceAndFixtureHashesVerified": true,
+        "runs": 12,
+        "numericChecks": 60,
+        "degenerateRejections": 2,
+        "maximumAbsoluteDifferences": {
+          "nativePreprocessing": 1.0436096431476471e-14,
+          "pcaScoresSignAligned": 1.2087553180606392e-14,
+          "pcaLoadingsSignAligned": 1.0956686946617111e-13,
+          "pcaExplainedVariance": 7.771561172376096e-16,
+          "aquagramSameSampleSdNoConversion": 2.708944180085382e-13
+        },
+        "historical": true,
+        "sourceBinding": "Recorded 0.2.0 numerical snapshot only; not current package/source hashes"
+      },
+      {
+        "reportId": "qa/v1.6-temperature-verification.json",
+        "reportSha256": "b008bdbf76cdab8da7be1273be1e9fc25c4573c496bfe86f6a51aac02fa2a2d0",
+        "implementationVersion": "0.2.0",
+        "sourceHarnessUsed": false,
+        "installedRPackage": true,
+        "artificial": true,
+        "sourceAndFixtureHashesVerified": true,
+        "runs": 26,
+        "numericValues": 1026,
+        "guards": 4,
+        "maximumAbsoluteDifference": 2.5205736164934933e-08,
+        "historical": true,
+        "sourceBinding": "Recorded 0.2.0 numerical snapshot only; not current package/source hashes"
+      },
+      {
+        "reportId": "qa/v1.6-plsr-verification.json",
+        "reportSha256": "805ba74ae8dd50720ae042e7e317e0f4277a1ed4144934255c33bcba2a032b88",
+        "implementationVersion": "0.2.0",
+        "sourceHarnessUsed": false,
+        "installedRPackage": true,
+        "artificial": true,
+        "sourceAndFixtureHashesVerified": true,
+        "runs": 13,
+        "numericChecks": 420,
+        "maximumAbsoluteDifference": 4.997673386242241e-10,
+        "historical": true,
+        "sourceBinding": "Recorded 0.2.0 numerical snapshot only; not current package/source hashes"
       }
     ],
-    "sourceBinding": "Each report identifies its recorded numerical source and artificial fixtures, not every app/UI/deployment file."
+    "sourceBinding": "Each current report source/input/output SHA was checked against its actual numerical files. Source/UI/deployment and ordinary-user runs are separate."
   }
 }
