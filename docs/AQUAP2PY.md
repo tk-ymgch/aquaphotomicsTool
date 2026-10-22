@@ -1,8 +1,8 @@
-# aquap2py 0.1.0：使い方と対応範囲
+# aquap2py 0.2.0：使い方と対応範囲
 
-aquap2pyは、aquap2の計算をPythonで扱うための非公式の部分移植です。名称の`py`はPythonを表し、公式Python版や全機能互換を意味しません。Workbench v1.5で新しく読み込んだデータの既定エンジンになっています。
+aquap2pyは、aquap2の計算をPythonで扱うための非公式の部分移植です。名称の`py`はPythonを表し、公式Python版や全機能互換を意味しません。Workbench v1.6の既定エンジンで、R不要の温度校正AQとaquap2方式PLSRを条件限定で追加しました。
 
-参照先はaquap2 **0.4.5**、固定commit `d31c1231bf71f0e73f1a630a32934602782be488` です。aquap2pyの版0.1.0、アプリの版1.5、参照Rパッケージの版0.4.5は別々に記録します。
+参照先はaquap2 **0.4.5**、固定commit `d31c1231bf71f0e73f1a630a32934602782be488` です。aquap2pyの版0.2.0、アプリの版1.6、参照Rパッケージの版0.4.5は別々に記録します。
 
 ## Webアプリで使う
 
@@ -13,7 +13,7 @@ aquap2pyは、aquap2の計算をPythonで扱うための非公式の部分移植
 
 計算はブラウザー内で行い、測定データをRや公開サイトへ送信しません。初回のPython実行環境・ライブラリの取得にはネット接続が必要です。ブラウザーを使う通常解析でR本体APIを実行しないことと、開発時にRを参照して機能を検証することを区別します。
 
-## 0.1.0で使える範囲
+## 0.2.0で使える範囲
 
 | 処理 | 現在の範囲・定義 |
 | --- | --- |
@@ -22,10 +22,26 @@ aquap2pyは、aquap2の計算をPythonで扱うための非公式の部分移植
 | SG平滑化・微分 | 列位置の間隔1で計算。不等間隔波長も補間しない |
 | PCA | 平均中心化、波長ごとの標準化なし、最大10成分 |
 | Aquagram | 標本SDのclassic、対照群差のclassic-diff。最大24実波長 |
+| 温度校正AQ | sfc/diff、AUC系8モード、固定12/15帯。校正端点/Texpは観測済み温度のみ |
+| aquap2方式PLSR | PLS1/kernelpls、中心化・非スケーリング、固定/自動成分、LOO/群単位CV |
 
 散乱補正→SG、SG→散乱補正の順序を選べます。これは移植した処理の順序設定であり、R本体の任意の解析手順・実験設計や旧版アプリ全体を再現するモードではありません。
 
-欠損値は停止だけに対応し、平均値・中央値による補完は行いません。PCAの波長標準化、Aquagramの基準なし、PLS有効も実行を止めます。温度校正・AUC/sfc/aucs.dce、分類、装置固有I/O、aquap2本来のPLSR、全ての取込・実験設計・描画・bootstrap等は未移植です。詳しい機能別・API別一覧は、アプリの「解析方式」と `python/aquap2py/coverage.json` を参照してください。
+欠損値は停止だけに対応し、平均値・中央値による補完は行いません。PCAの波長標準化、Aquagramの基準なしも実行を止めます。未観測温度LOESS、bootstrap/観測数補正、PLSR固有outlier除外・多応答/他method、分類、装置固有I/O、全ての取込・実験設計・描画は未移植です。詳しい機能別・API別一覧は、アプリの「解析方式」と [対応範囲](AQUAP2PY_COVERAGE.md)、`python/aquap2py/coverage.json` を参照してください。
+
+## 温度校正Aquagram
+
+測定データとは別に校正CSV/Excelを読み込み、温度列を指定します。TCalib下端・上端・Texpは校正で観測した温度へ完全一致させます。未観測温度のR LOESSを別の補間で代用しません。校正用SGは既定17点、測定AQ内部SGは既定21点です。sfcには測定格子と校正の1300〜1600 nm内格子の一致が必要です。
+
+AUC系は固定帯の多角形面積÷全スペクトル多角形面積を群平均し、校正2端点の面積比のmin/maxを0/100%へ換算します。tnはTexp校正%を減算、dceは校正温度幅による℃相当への換算、diffは対照群を減算します。DCEは試料温度の推定ではありません。0〜100%を外れてもclipせず通知します。sfcは未平滑化校正平均を中心とする測定RMSで標準化し、校正SDは使いません。
+
+設定JSONには校正ファイル名・シート・SHA-256と条件だけを保存します。再開時は校正ファイルを再読込します。結果ZIPは `data/calibration_input.csv`、`temperature_calibration.json`、`temperature_aquagram.json` を含みます。AUC座標のnm値は描画用の帯中央で、単一点吸光度ではありません。
+
+## aquap2方式PLSR
+
+Webの専用設定で数値目的変数、固定/自動成分、LOOまたは群単位CVを選びます。単一応答kernelpls、平均中心化・非スケーリング、反復adjCV最小成分の最頻値による自動選択を対象にしています。全Xの前処理後にCVを行い、成分選択とCVを同じデータで行うため、Workbenchの外側nested CVによる性能評価とは異なります。
+
+通常Pythonの `plsr` / `predict_plsr` では、予測に同じ前処理済み変数空間のXを渡します。未知試料の前処理をモデルが自動再生するものではなく、Webの未知予測UIも含みません。整数分割数による乱数CVはNumPy PCG64を使い、Rの同じseedとは分割が一致しません。R由来の具体的segmentsを明示再生した数値比較と、R乱数系列互換を区別します。結果ZIPの `native_plsr_model.json` と `data/native_plsr_*.csv` に成分選択・分割・CV/校正値・係数を保存します。
 
 ## 他のエンジンとの使い分け
 
@@ -55,7 +71,9 @@ python -m venv qa/aquap2py-venv
 - `verifiedScope`・`limitations`：確認範囲と未対応事項。
 - `currentRunComparedWithR`・実行記録：その解析結果をRで個別比較したか。本体API未実行の通常解析と、機能開発時の検証は別です。
 
-新移植の数値差・通過件数・具体的な照合条件は `qa/v1.5-aquap2py-verification.json` を参照します。この文書では未確定の検証結果を先に成功扱いにしません。v1.3の限定source harness、v1.4のWorkbench前処理後のR本体比較を、aquap2py固有の前処理・数値実装の検証値へ流用しません。人工データの一致は実測研究データや全ての条件での科学的妥当性を示しません。
+0.2.0の温度AQは `qa/v1.6-temperature-verification.json` で26条件・1,026 scalar値、PLSRは `qa/v1.6-plsr-verification.json` で13条件・420数値チェックを確認しました。最大絶対差はそれぞれ `2.52e-8`、`5.00e-10` で、各reportの事前の絶対・相対許容差内です。インストール済みaquap2の公開APIを使用し、source harnessは使っていません。
+
+前処理/PCA/classicは0.2.0で再実行し、`qa/v1.6-classic-verification.json` の12条件・60数値チェックを確認しました。`qa/v1.5-aquap2py-verification.json` は0.1.0の履歴で、古い全file SHAが現版全体にも一致するという意味ではありません。v1.3の限定source harnessやv1.4のWorkbench前処理後R比較も別記録です。人工データの一致は実測研究データや全条件の科学的妥当性を示しません。
 
 ## ライセンスと配布
 

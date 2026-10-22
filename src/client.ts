@@ -1,7 +1,8 @@
-import type { AnalysisConfig, AnalysisResult, DatasetSummary, Progress } from './types';
+import type { AnalysisConfig, AnalysisResult, CalibrationSummary, DatasetSummary, Progress } from './types';
 
 export type WorkerPayload =
   | { kind: 'load'; data: ArrayBuffer; filename: string; sheet: string | null }
+  | { kind: 'loadCalibration'; data: ArrayBuffer; filename: string; sheet: string | null }
   | { kind: 'demo' }
   | { kind: 'analyze'; config: AnalysisConfig };
 
@@ -84,6 +85,16 @@ export class AnalysisClient {
     return this.request<DatasetSummary>(async () => ({ kind: 'demo' }));
   }
 
+  loadCalibration(file: File, sheet?: string): Promise<CalibrationSummary> {
+    return this.request<CalibrationSummary>(async () => {
+      if (!/\.(csv|xlsx|xls)$/i.test(file.name)) throw new Error('温度校正にはCSV、XLSX、XLSを選択してください。');
+      if (file.size === 0 || file.size > MAX_FILE_BYTES) throw new Error('校正ファイルは空でない50 MB以下のファイルを選択してください。');
+      this.report({phase:'reading',message:'温度校正データをブラウザー内に読み込んでいます。'});
+      const data = await file.arrayBuffer();
+      return {kind:'loadCalibration',data,filename:file.name,sheet:sheet??null};
+    });
+  }
+
   analyze(config: AnalysisConfig): Promise<AnalysisResult> {
     // Clone synchronously so later UI changes cannot change an in-flight request.
     let snapshot: AnalysisConfig;
@@ -116,7 +127,7 @@ export class AnalysisClient {
       void prepare().then(payload => {
         if (this.disposed || this.pending?.id !== id) return;
         const request: WorkerRequest = { ...payload, id, pythonUrl: this.pythonUrl };
-        const transfer = payload.kind === 'load' ? [payload.data] : [];
+        const transfer = payload.kind === 'load' || payload.kind === 'loadCalibration' ? [payload.data] : [];
         try {
           this.worker.postMessage(request, transfer);
         } catch {

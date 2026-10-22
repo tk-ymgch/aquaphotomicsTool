@@ -661,7 +661,7 @@ def _analyze_pls(df: pd.DataFrame, settings: dict, requested: dict, columns: lis
     return result, applied, exports
 
 
-def analyze(df: pd.DataFrame, config: dict) -> dict:
+def analyze(df: pd.DataFrame, config: dict, *, calibration: pd.DataFrame | None = None) -> dict:
     """Apply a validated pipeline and return data, plots' arrays and text exports.
 
     Order: missing-data handling -> scatter correction -> uniform interpolation
@@ -671,7 +671,7 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
     if isinstance(config, dict):
         engine = config.get("analysisEngine", "python")
         if engine == "aquap2py":
-            return _analyze_aquap2py(df, config)
+            return _analyze_aquap2py(df, config, calibration=calibration)
         if engine not in {"python", "aquap2"}:
             raise ValueError("対応しない解析エンジンです。")
     # Loaded on demand: inspecting a file requires only NumPy and pandas in
@@ -987,7 +987,31 @@ def analyze(df: pd.DataFrame, config: dict) -> dict:
     return result
 
 
-def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
+def inspect_calibration_bytes(data: bytes, filename: str, sheet: str | None = None):
+    """Keep calibration spectra in the worker; expose labels and observed temperatures only."""
+    import hashlib
+    frame, summary = inspect_bytes(data, filename, sheet)
+    waves = {item["column"] for item in summary["wavelengthColumns"]}
+    if len(waves) < 3 or len(frame) * len(waves) > MAX_MATRIX_ELEMENTS:
+        raise ValueError("温度校正データの波長列数・行数を確認してください。")
+    columns = []
+    for column in frame.columns:
+        if column in waves:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
+        if len(values) and np.isfinite(values).all():
+            unique = np.unique(values)
+            if 2 <= len(unique) <= 2048:
+                columns.append({"column": column, "observedTemperatures": unique.tolist()})
+    if not columns:
+        raise ValueError("温度校正データに2種類以上の有限温度値を持つ数値列が必要です。")
+    digest = hashlib.sha256(data).hexdigest()
+    frame.attrs["source_sha256"] = digest
+    summary.update(sourceSha256=digest, temperatureColumns=columns)
+    return frame, summary
+
+
+def _analyze_aquap2py(df: pd.DataFrame, config: dict, *, calibration: pd.DataFrame | None = None) -> dict:
     """Adapt the existing table IO to the independent, R-free numerical port.
 
     Workbench's no-op path selects and validates the original measured matrix.
@@ -1004,6 +1028,7 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
     if (sibling / "aquap2py").is_dir() and str(sibling) not in sys.path:
         sys.path.insert(0, str(sibling))
     import aquap2py as port
+    native_aq, native_plsr = _native_settings(config)
 
     if config.get("missing", "error") != "error":
         raise ValueError("aquap2pyの初版は欠損補完に未対応です。欠損があれば停止を選択してください。")
@@ -1013,7 +1038,7 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
     if pls is not None and (not isinstance(pls, dict) or not isinstance(pls.get("enabled"), bool)):
         raise ValueError("PLSの有効・無効設定を確認してください。")
     if pls and pls["enabled"]:
-        raise ValueError("aquap2pyのPLSR移植は未対応です。Workbench標準PythonのPLSとは別の実装対象です。")
+        raise ValueError("Workbench標準Pythonのnested PLS設定を解除し、aquap2方式PLSRの専用設定を使用してください。")
     requested_components = _integer(config.get("components", 3), "PCA成分数", 1)
     if requested_components > 10:
         raise ValueError("aquap2pyのPCAは10成分までです。")
@@ -1022,8 +1047,8 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
         raise ValueError("aquap2pyのAquagramは3〜24波長を指定してください。")
     if not isinstance(config.get("aquagramReference", "global"), str):
         raise ValueError("Aquagramの基準を選択してください。")
-    if config.get("aquagramReference") in {"none", "None"}:
-        raise ValueError("aquap2pyの初版はclassic/classic-diffのみです。基準なしは未対応です。")
+    if config.get("aquagramReference") in {"none", "None"} and not (native_aq and native_aq["enabled"]):
+        raise ValueError("classic Aquagramでは全体平均か対照群を選択してください。")
     smooth = config.get("smooth", False)
     if not isinstance(smooth, bool):
         raise ValueError("平滑化の設定を確認してください。")
@@ -1044,19 +1069,59 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
     applied = {**result["metadata"]["settings"], "analysisEngine": "aquap2py",
                "scatter": scatter, "smooth": smooth, "derivative": derivative,
                "window": window, "polyorder": polyorder}
-    if applied["aquagramReference"] != "global" and not applied["aquagramReference"].startswith("group:"):
+    if applied["aquagramReference"] not in {"global", "none"} and not applied["aquagramReference"].startswith("group:"):
         applied["aquagramReference"] = "group:" + applied["aquagramReference"]
     if pls is not None:
         applied["pls"] = {key: value for key, value in pls.items() if key in {
             "enabled", "targetColumn", "maxComponents", "folds", "split", "cvGroupColumn", "seed", "scale"}}
+    if native_aq is not None:
+        applied["nativeAquagram"] = copy.deepcopy(native_aq)
+    if native_plsr is not None:
+        applied["nativePlsr"] = copy.deepcopy(native_plsr)
     scatter_steps = [{"method": scatter}] if scatter != "none" else []
     sg_steps = ([{"method": "sgolay", "window": window, "polyorder": polyorder,
                   "derivative": derivative, "delta": 1}] if smooth or derivative else [])
     steps = sg_steps + scatter_steps if mode == "legacy-python" else scatter_steps + sg_steps
     dataset = port.ttap(spectrum["raw"], spectrum["wavelengths"], spectrum["ids"], spectrum["groups"])
+    temperature_options, calibration_model = None, None
+    if native_aq and native_aq["enabled"]:
+        if not isinstance(calibration, pd.DataFrame):
+            raise ValueError("温度校正データを別ファイルとして読み込んでください。設定JSONだけでは校正スペクトルを復元できません。")
+        column = native_aq["temperatureColumn"]
+        if column not in calibration.columns:
+            raise ValueError("指定した温度列が校正ファイルにありません。")
+        selected_calibration = sorted((parse_wavelength(c), c) for c in calibration.columns if parse_wavelength(c) is not None)
+        if not selected_calibration:
+            raise ValueError("温度校正の波長列がありません。")
+        source_info = native_aq.get("calibrationSource")
+        if source_info and (source_info["sha256"] != calibration.attrs.get("source_sha256") or source_info["sheet"] != calibration.attrs.get("source_sheet")):
+            raise ValueError("設定が指定する校正ファイル・シートと読み込まれたデータが一致しません。同じ校正ファイルを再読込してください。")
+        calibration_model = port.temperature_calibration(
+            calibration[[item[1] for item in selected_calibration]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float),
+            [item[0] for item in selected_calibration], pd.to_numeric(calibration[column], errors="coerce").to_numpy(dtype=float),
+            coordinate_system=native_aq["coordinateSystem"], smooth_n=native_aq["calibrationSmoothN"])
+        calibration_model["fileSource"] = {"name":calibration.attrs.get("source_name", "in-memory calibration"),
+            "sheet":calibration.attrs.get("source_sheet"), "sha256":calibration.attrs.get("source_sha256")}
+        temperature_options = {"calibration":calibration_model, "mode":native_aq["mode"],
+            "t_calib":native_aq["tCalib"], "t_exp":native_aq["tExp"], "smooth_n":native_aq["smoothN"],
+            "msc":native_aq["msc"], "reference":native_aq["referenceGroup"] if native_aq["mode"].endswith("-diff") else None,
+            "targets":result["aquagram"]["wavelengths"] if native_aq["mode"].startswith("sfc") else None}
+    plsr_options = None
+    if native_plsr and native_plsr["enabled"]:
+        target = native_plsr["targetColumn"]
+        if target not in df.columns or target in applied["wavelengthColumns"] or target == applied["idColumn"]:
+            raise ValueError("aquap2方式PLSRの目的変数は波長列・試料IDとは別の数値列を指定してください。")
+        cv_column = native_plsr["cvGroupColumn"]
+        if native_plsr["validation"] == "group" and (cv_column not in df.columns or cv_column == target or cv_column in applied["wavelengthColumns"]):
+            raise ValueError("PLSRのCV群には目的変数・波長列以外の列を指定してください。")
+        if native_plsr["validation"] == "group" and df[cv_column].isna().any():
+            raise ValueError("PLSRのCV群列に欠損値があります。")
+        plsr_options = {"y":pd.to_numeric(df[target],errors="coerce").to_numpy(dtype=float),
+            "ncomp":native_plsr["components"], "validation":native_plsr["validation"],
+            "cv_groups":df[cv_column].astype(str).tolist() if native_plsr["validation"] == "group" else None}
     cube = port.gdmm(dataset, steps=steps, components=applied["components"],
                      aquagram_wavelengths=result["aquagram"]["wavelengths"],
-                     reference=applied["aquagramReference"], aq_smooth_n=3)
+                     reference=applied["aquagramReference"], aq_smooth_n=3, temperature=temperature_options, plsr=plsr_options)
     processed = np.asarray(cube["preprocessed"], dtype=float)
     pc = cube["pca"]
     scores, loadings = np.asarray(pc["scores"]), np.asarray(pc["loadings"])
@@ -1067,8 +1132,9 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
     for group in result["aquagram"]["groups"]:
         group["values"] = np.asarray(group["values"]).tolist()
     result["aquagram"]["wavelengths"] = np.asarray(result["aquagram"]["wavelengths"]).tolist()
-    result["aquagram"]["sdDdof"] = 1
-    applied["aquagramWavelengths"] = result["aquagram"]["wavelengths"]
+    result["aquagram"]["sdDdof"] = (1 if native_aq["mode"].startswith("sfc") else None) if temperature_options else 1
+    if not temperature_options:
+        applied["aquagramWavelengths"] = result["aquagram"]["wavelengths"]
     spectrum["processed"] = processed.tolist()
     report = json.loads(importlib.resources.files("aquap2py").joinpath("coverage.json").read_text(encoding="utf-8"))
     report["currentRunComparedWithR"] = False
@@ -1077,12 +1143,23 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
     execution = {"engine": "aquap2py", "preprocessingEngine": "aquap2py", "pcaEngine": "aquap2py",
         "aquagramEngine": "aquap2py", "packageApiExecuted": False,
         "implementationName": "aquap2py", "implementationVersion": port.__version__,
-        "referenceAquap2Version": report["reference"]["version"], "aquagramSdDdof": 1,
+        "referenceAquap2Version": report["reference"]["version"], "aquagramSdDdof": result["aquagram"]["sdDdof"],
         "aquagramMode": result["aquagram"].get("mode", "classic")}
     warnings = [warning for warning in result["metadata"]["warnings"] if "最近傍" in warning or "成分数を" in warning or "人工" in warning]
     warnings += ["aquap2pyは非公式の部分移植です。対応一覧に記録した条件でR本体と検証し、今回の入力をRへ送って照合したものではありません。",
-        "SNVは標本SD（ddof=1）、SG微分の間隔は列位置1です。波長nmあたりへ換算せず、不等間隔も補間しません。",
-        "Aquagram内部は恒等SG3・MSCなしの明示条件です。aquap2既定のSG21・内部MSCありとは区別してください。"]
+        "SNVは標本SD（ddof=1）、SG微分の間隔は列位置1です。波長nmあたりへ換算せず、不等間隔も補間しません。"]
+    if temperature_options:
+        warnings.extend(result["aquagram"].get("warnings", []))
+        warnings.append("温度校正Aquagramは観測温度のTCalib両端・Texpに限定。未観測温度のloess、校正外れ値除去・bootstrapは未移植です。")
+        if scatter != "none" or derivative:
+            warnings.append("測定側の散乱補正・微分と校正吸光度の尺度を確認してください。校正側へ同じ前処理を自動適用していません。")
+    else:
+        warnings.append("Aquagram内部は恒等SG3・MSCなしの明示条件です。aquap2既定のSG21・内部MSCありとは区別してください。")
+    if "plsr" in cube:
+        native_result = copy.deepcopy(cube["plsr"])
+        native_result.update(targetColumn=native_plsr["targetColumn"],ids=spectrum["ids"],groups=spectrum["groups"])
+        result["nativePlsr"] = native_result
+        warnings.extend(native_result.get("warnings", []))
     if not np.allclose(np.diff(spectrum["wavelengths"]), np.diff(spectrum["wavelengths"])[0]):
         warnings.append("不等間隔の波長です。aquap2pyのSGは列位置に対する演算として適用します。")
     result["metadata"].update(settings=applied, execution=execution, warnings=warnings, compatibilityReport=report)
@@ -1094,18 +1171,26 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
         table.insert(0, "sample_id", spectrum["ids"])
     loadings_df = pd.DataFrame(loadings, columns=pc_names)
     loadings_df.insert(0, "wavelength_nm", spectrum["wavelengths"])
-    aq_rows = [{"group": group["name"], "wavelength_nm": wave, "value": float(value), "n": group["n"]}
-        for group in result["aquagram"]["groups"] for wave, value in zip(result["aquagram"]["wavelengths"], group["values"])]
+    aq_rows = [{"group": group["name"], "wavelength_nm": wave, "value": float(value), "n": group["n"],
+        **({"coordinate":result["aquagram"]["labels"][i],"unit":result["aquagram"].get("unit")} if temperature_options else {})}
+        for group in result["aquagram"]["groups"] for i,(wave, value) in enumerate(zip(result["aquagram"]["wavelengths"], group["values"]))]
     runtime = {**execution, "referenceCommit": report["reference"]["commit"], "steps": steps,
                "currentRunComparedWithR": False, "completeCompatibility": False,
                "nativePipeline": cube.get("provenance", {}), "rRequired": False}
+    if temperature_options:
+        runtime["temperatureAquagram"] = result["aquagram"].get("provenance", {})
+    if "nativePlsr" in result:
+        runtime["nativePlsr"] = result["nativePlsr"]["provenance"]
     # Requested settings retain only declared fields; transport credentials are never retained.
     requested = {key: copy.deepcopy(value) for key, value in config.items() if key in set(applied)}
     if "pls" in requested:
         requested["pls"] = copy.deepcopy(applied["pls"])
+    for key in ("nativeAquagram", "nativePlsr"):
+        if key in requested:
+            requested[key] = copy.deepcopy(applied[key])
     provenance = {**before, "engineVersion": "aquap2py-"+port.__version__, "execution": execution,
         "requestedConfig": requested, "implementation": "aquap2py unofficial Python numerical port; no R execution",
-        "aquap2_not_executed": True, "order": [step["method"] for step in steps]+["pca", "aquagram"],
+        "aquap2_not_executed": True, "order": [step["method"] for step in steps]+["pca", "aquagram"]+(["native-plsr"] if plsr_options else []),
         "pipeline": [step["method"] for step in steps], "sgApplied": bool(sg_steps),
         "sgMode": "R signal-compatible sample-position filter" if sg_steps else None,
         "sgDelta": 1 if sg_steps else None, "snvDdof": 1 if scatter == "snv" else None,
@@ -1126,11 +1211,73 @@ def _analyze_aquap2py(df: pd.DataFrame, config: dict) -> dict:
         "compatibility-report.json": json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False),
         "README.txt": "aquap2py "+port.__version__+" / 非公式・部分移植\n前処理・PCA・AquagramをPythonで実行。R本体APIは実行していません。\n"
             + (ARTIFICIAL+"の解析です。実験結果ではありません。\n" if before.get("source", {}).get("artificial") else "")
-            + "Aquagramはsample SD(ddof=1)。SGは列位置間隔1、不等間隔補間なし。AQ内部SG3・MSCなしの条件です。\n"
+            + result["aquagram"]["definition"] + "\nSGは列位置間隔1、不等間隔補間なし。適用条件はruntime JSONを参照してください。\n"
             + "完全対応ではありません。compatibility-report.jsonの実装/検証/未対応を確認してください。\n"
-            + "既存WorkbenchのPLSはaquap2のPLSR移植とは別です。温度校正/AUC/分類/装置別IOはこの移植版で未対応です。\n"
+            + "Workbenchのnested PLSとaquap2方式PLSRは別実装です。温度校正/AUC/PLSRも条件限定、loess/分類/装置別IOの完全対応ではありません。\n"
             + "data/input.csvは元の表、preprocessed.csvは移植版の適用値です。原著者・参照版・ライセンスは同梱のaquap2py/を参照。\n",
         "aquap2py/NOTICE.md": importlib.resources.files("aquap2py").joinpath("NOTICE.md").read_text(encoding="utf-8"),
         "aquap2py/LICENSE": importlib.resources.files("aquap2py").joinpath("LICENSE").read_text(encoding="utf-8"),
     })
+    if calibration_model is not None:
+        result["exports"]["data/calibration_input.csv"] = calibration.to_csv(index=False)
+        result["exports"]["temperature_calibration.json"] = json.dumps(calibration_model,ensure_ascii=False,indent=2,allow_nan=False)
+        result["exports"]["temperature_aquagram.json"] = json.dumps(result["aquagram"],ensure_ascii=False,indent=2,allow_nan=False)
+    if "nativePlsr" in result:
+        native = result["nativePlsr"]
+        result["exports"]["native_plsr_model.json"] = json.dumps(native,ensure_ascii=False,indent=2,allow_nan=False)
+        result["exports"]["data/native_plsr_predictions.csv"] = _csv(pd.DataFrame({"sample_id":spectrum["ids"],"group":spectrum["groups"],
+            "observed":native["observed"],"predicted_cv":native["predictedCV"],"predicted_calibration":native["predictedCalibration"],
+            "residual_cv":native["residuals"],"fold":native["fold"]}))
+        result["exports"]["data/native_plsr_curve.csv"] = _csv(pd.DataFrame(native["curve"]))
+        result["exports"]["data/native_plsr_coefficients.csv"] = _csv(pd.DataFrame({"wavelength_nm":spectrum["wavelengths"],"coefficient":native["coefficients"]["values"]}))
+        result["exports"]["README.txt"] += "\n"+native["definition"]+"\n自動選択に使ったCV誤差を、独立な外側CV性能とは扱いません。未知予測APIは同じ前処理済み波長列を受け取ります。\n"
     return result
+
+
+def _native_settings(config):
+    """Normalize a small, whitelisted UI contract, never source matrices/tokens."""
+    import copy
+    aq, plsr = None, None
+    if "nativeAquagram" in config:
+        source = config["nativeAquagram"]
+        if not isinstance(source, dict):
+            raise ValueError("温度校正Aquagram設定を確認してください。")
+        aq = {key:copy.deepcopy(value) for key,value in source.items() if key in {
+            "enabled","mode","coordinateSystem","temperatureColumn","calibrationSmoothN","tCalib","tExp","smoothN","msc","referenceGroup","calibrationSource"}}
+        if not isinstance(aq.get("enabled"), bool) or not isinstance(aq.get("msc"), bool):
+            raise ValueError("温度校正Aquagramの有効・MSC設定を確認してください。")
+        if aq.get("mode") not in ("sfc","sfc-diff","aucs","aucs-diff","aucs.tn","aucs.tn-diff","aucs.tn.dce","aucs.tn.dce-diff","aucs.dce","aucs.dce-diff") or aq.get("coordinateSystem") not in ("ot1.12","ot1.15"):
+            raise ValueError("温度校正Aquagram方式・座標系を確認してください。")
+        if not isinstance(aq.get("tCalib"), list) or len(aq["tCalib"]) != 2:
+            raise ValueError("TCalibの下限と上限を指定してください。")
+        aq["tCalib"] = [_finite(v,"TCalib") for v in aq["tCalib"]]
+        aq["tExp"] = _finite(aq.get("tExp"),"Texp")
+        if aq["tCalib"][0] >= aq["tCalib"][1]:
+            raise ValueError("TCalibの下限は上限より小さくしてください。")
+        for key in ("smoothN","calibrationSmoothN"):
+            aq[key] = _integer(aq.get(key), "内部SG窓幅", 3)
+            if aq[key] > 501 or aq[key] % 2 != 1:
+                raise ValueError("内部SGは501以下の奇数を指定してください。")
+        for key in ("temperatureColumn","referenceGroup"):
+            if aq.get(key) is not None and (not isinstance(aq[key], str) or not aq[key].strip()):
+                raise ValueError("校正温度列・対照群は空でない文字列にしてください。")
+        if "calibrationSource" in aq:
+            identity = aq["calibrationSource"]
+            if not isinstance(identity, dict) or not isinstance(identity.get("name"), str) or not isinstance(identity.get("sha256"), str) or not re.fullmatch("[a-f0-9]{64}",identity["sha256"]) or (identity.get("sheet") is not None and not isinstance(identity["sheet"], str)):
+                raise ValueError("校正ファイルの識別情報を確認してください。")
+            aq["calibrationSource"] = {k:identity.get(k) for k in ("name","sheet","sha256")}
+    if "nativePlsr" in config:
+        source = config["nativePlsr"]
+        if not isinstance(source, dict):
+            raise ValueError("aquap2方式PLSR設定を確認してください。")
+        plsr = {key:copy.deepcopy(value) for key,value in source.items() if key in {"enabled","targetColumn","components","validation","cvGroupColumn"}}
+        if not isinstance(plsr.get("enabled"), bool) or plsr.get("validation") not in ("LOO","group"):
+            raise ValueError("PLSRの有効設定・CV方式を確認してください。")
+        if plsr.get("components") is not None:
+            plsr["components"] = _integer(plsr["components"],"PLSR成分数",1)
+            if plsr["components"] > 30:
+                raise ValueError("PLSRの固定成分数は30以下を指定してください。")
+        for key in ("targetColumn","cvGroupColumn"):
+            if plsr.get(key) is not None and (not isinstance(plsr[key],str) or not plsr[key].strip()):
+                raise ValueError("PLSRの目的変数・CV群は空でない列名にしてください。")
+    return aq, plsr

@@ -26,7 +26,7 @@ function check(name, test) { try { test(); passed++; } catch (error) { console.e
 check('new document roundtrip and detached snapshots', () => {
   const input = structuredClone(config), doc = createSettingsDocument(input, { name: summary.name });
   assert.equal(doc.format, 'aquaphotomics-workbench-settings');
-  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.5');
+  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.6');
   assert.equal(doc.source.sheet, null); assert.ok(Number.isFinite(Date.parse(doc.createdAt)));
   input.range[0] = 999; input.wavelengthColumns.length = 0;
   assert.deepEqual(decode(doc), config);
@@ -136,4 +136,78 @@ check('aquap2py roundtrip keeps real uneven wavelengths and no connection secret
   assert.ok(!JSON.stringify(doc).includes('private-transport'));
   for (const appVersion of ['1.2','1.3','1.4']) assert.deepEqual(decode({...createSettingsDocument(config,null),appVersion}),config);
 });
-console.log(`PASS: ${passed} settings checks (roundtrip, legacy provenance, strict validation, columns, SG grid, PLS, safety)`);
+const nativeAquagram = {
+  enabled: true, mode: 'aucs.dce', coordinateSystem: 'ot1.12', temperatureColumn: 'calibration_temperature',
+  calibrationSmoothN: 17, tCalib: [20, 30], tExp: 25, smoothN: 21, msc: false, referenceGroup: null,
+  calibrationSource: { name: 'artificial-calibration.xlsx', sheet: '温度校正', sha256: 'a'.repeat(64) },
+};
+const nativePlsr = { enabled: true, targetColumn: 'target', components: null, validation: 'LOO', cvGroupColumn: null };
+check('v1.6 calibration source keeps identity only and is detached from the input', () => {
+  const input = { ...config, analysisEngine: 'aquap2py', nativeAquagram: structuredClone(nativeAquagram) };
+  const doc = createSettingsDocument(input, { name: summary.name });
+  assert.deepEqual(decode(doc), input);
+  assert.deepEqual(Object.keys(doc.config.nativeAquagram.calibrationSource).sort(), ['name', 'sha256', 'sheet']);
+  input.nativeAquagram.tCalib[0] = 21;
+  input.nativeAquagram.calibrationSource.name = 'changed.xlsx';
+  assert.deepEqual(doc.config.nativeAquagram, nativeAquagram);
+  // The temperature column belongs to the separate calibration file, not the measurement summary.
+  assert.equal(summary.columns.includes(doc.config.nativeAquagram.temperatureColumn), false);
+});
+check('unknown calibration matrices and transport credentials are stripped on export and import', () => {
+  const extra = { matrix: [['discard-calibration-measurements']], rawTemperatureMeans: [['discard-model-values']],
+    credentials: { bearer: 'discard-calibration-credential' }, endpoint: 'discard-private-endpoint' };
+  const aq = { ...nativeAquagram, ...extra, calibrationSource: { ...nativeAquagram.calibrationSource, ...extra } };
+  const input = { ...config, analysisEngine: 'aquap2py', nativeAquagram: aq,
+    nativePlsr: { ...nativePlsr, model: { coefficients: ['discard-fitted-model'] }, sessionBearer: 'discard-plsr-session' },
+    calibration: extra, sessionBearer: 'discard-root-session' };
+  const expected = { ...config, analysisEngine: 'aquap2py', nativeAquagram, nativePlsr };
+  assert.deepEqual(decode(input), expected);
+  const document = createSettingsDocument(input, { name: summary.name, ...extra });
+  assert.deepEqual(decode(document), expected);
+  assert.equal(JSON.stringify(document).includes('discard-'), false);
+});
+check('all calibrated Aquagram modes and both coordinate systems roundtrip without changing settings', () => {
+  const modes = ['sfc', 'sfc-diff', 'aucs', 'aucs-diff', 'aucs.tn', 'aucs.tn-diff',
+    'aucs.tn.dce', 'aucs.tn.dce-diff', 'aucs.dce', 'aucs.dce-diff'];
+  for (const mode of modes) for (const coordinateSystem of ['ot1.12', 'ot1.15']) {
+    const aq = { ...nativeAquagram, mode, coordinateSystem, msc: true, referenceGroup: mode.endsWith('-diff') ? 'group:literal-control-name' : null };
+    const cfg = { ...config, analysisEngine: 'aquap2py', nativeAquagram: aq };
+    assert.deepEqual(decode(createSettingsDocument(cfg, null)), cfg);
+  }
+});
+check('calibration identity, temperatures, SG and required fields reject invalid settings', () => {
+  const invalid = [{ temperatureColumn: null }, { mode: 'classic' }, { coordinateSystem: 'custom' },
+    { tCalib: [30, 20] }, { tCalib: [20] }, { tCalib: ['20', 30] }, { tExp: '25' },
+    { calibrationSmoothN: 16 }, { calibrationSmoothN: 1 }, { smoothN: 20 }, { smoothN: 503 }, { msc: 'false' },
+    { mode: 'aucs-diff', referenceGroup: null }, { mode: 'sfc-diff', referenceGroup: '' },
+    { calibrationSource: { ...nativeAquagram.calibrationSource, sha256: 'not-a-sha256' } },
+    { calibrationSource: { ...nativeAquagram.calibrationSource, sheet: 123 } }];
+  for (const change of invalid) assert.throws(() => decode({ ...config, nativeAquagram: { ...nativeAquagram, ...change } }));
+  const disabled = { ...nativeAquagram, enabled: false, temperatureColumn: null, mode: 'aucs-diff', referenceGroup: null };
+  assert.deepEqual(decode({ ...config, nativeAquagram: disabled }).nativeAquagram, disabled);
+});
+check('native PLSR fixed, automatic, LOO and group choices roundtrip without implicit clamping', () => {
+  for (const components of [null, 1, 30]) for (const validation of ['LOO', 'group']) {
+    const plsr = { ...nativePlsr, components, validation, cvGroupColumn: validation === 'group' ? 'batch' : null };
+    const cfg = { ...config, analysisEngine: 'aquap2py', nativePlsr: plsr };
+    assert.deepEqual(decode(createSettingsDocument(cfg, null)), cfg);
+  }
+  const disabled = { ...nativePlsr, enabled: false, targetColumn: null };
+  assert.deepEqual(decode({ ...config, nativePlsr: disabled }).nativePlsr, disabled);
+});
+check('native PLSR target, component and CV group guards reject invalid settings', () => {
+  const invalid = [{ targetColumn: null }, { targetColumn: 'absent' }, { targetColumn: 'sample_id' },
+    { targetColumn: 'wl_1400' }, { components: 0 }, { components: 31 }, { components: 1.5 },
+    { components: '2' }, { validation: 'kfold' }, { validation: 'group', cvGroupColumn: null },
+    { validation: 'group', cvGroupColumn: 'target' }, { validation: 'group', cvGroupColumn: 'absent' },
+    { validation: 'group', cvGroupColumn: 'wl_1400' }];
+  for (const change of invalid) assert.throws(() => decode({ ...config, nativePlsr: { ...nativePlsr, ...change } }));
+});
+check('v1.5 documents preserve an explicit previous engine and do not gain native settings', () => {
+  const cfg = { ...config, analysisEngine: 'python' };
+  const doc = { ...createSettingsDocument(cfg, null), appVersion: '1.5' };
+  assert.deepEqual(decode(doc), cfg);
+  assert.equal('nativeAquagram' in decode(doc), false);
+  assert.equal('nativePlsr' in decode(doc), false);
+});
+console.log(`PASS: ${passed} settings checks (roundtrip, legacy provenance, strict validation, columns, SG grid, PLS, native calibration/PLSR, safety)`);

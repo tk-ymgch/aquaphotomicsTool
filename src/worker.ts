@@ -113,8 +113,9 @@ if '/home/pyodide' not in sys.path:
     sys.path.insert(0, '/home/pyodide')
 if '/home/pyodide/aquap2py.zip' not in sys.path:
     sys.path.insert(0, '/home/pyodide/aquap2py.zip')
-from workbench import inspect_bytes, demo_dataset, analyze
+from workbench import inspect_bytes, inspect_calibration_bytes, demo_dataset, analyze
 _dataset = None
+_calibration_dataset = None
 `);
       return pyodide;
     })().catch(error => {
@@ -143,13 +144,14 @@ async function execute(request: WorkerRequest): Promise<DatasetSummary | Analysi
 _next_dataset, _next_summary = demo_dataset()
 _response_json = _json.dumps(_next_summary, ensure_ascii=False, allow_nan=False)
 _dataset = _next_dataset
+_calibration_dataset = None
 _response_json
 `);
     } finally {
       clearGlobals(pyodide, ['_next_dataset', '_next_summary', '_response_json']);
     }
   }
-  if (request.kind === 'load') {
+  if (request.kind === 'load' || request.kind === 'loadCalibration') {
     const extension = request.filename.toLowerCase().split('.').at(-1);
     if (extension === 'xlsx') await ensureXlsx(pyodide, request.pythonUrl, request.id);
     else if (extension === 'xls') await ensurePackages(pyodide, ['xlrd'], request.id);
@@ -159,27 +161,32 @@ _response_json
     pyodide.globals.set('_input_data', new Uint8Array(request.data));
     pyodide.globals.set('_input_name', request.filename);
     pyodide.globals.set('_input_sheet_json', JSON.stringify(request.sheet));
+    pyodide.globals.set('_input_is_calibration',request.kind === 'loadCalibration');
     try {
       return await jsonResult<DatasetSummary>(pyodide, `
-_next_dataset, _next_summary = inspect_bytes(
+_next_dataset, _next_summary = (inspect_calibration_bytes if _input_is_calibration else inspect_bytes)(
     bytes(_input_data.to_py()), _input_name, _json.loads(_input_sheet_json)
 )
 _response_json = _json.dumps(_next_summary, ensure_ascii=False, allow_nan=False)
-_dataset = _next_dataset
+if _input_is_calibration:
+    _calibration_dataset = _next_dataset
+else:
+    _dataset = _next_dataset
+    _calibration_dataset = None
 _response_json
 `);
     } finally {
-      clearGlobals(pyodide, ['_input_data', '_input_name', '_input_sheet_json', '_next_dataset', '_next_summary', '_response_json']);
+      clearGlobals(pyodide, ['_input_data', '_input_name', '_input_sheet_json', '_input_is_calibration', '_next_dataset', '_next_summary', '_response_json']);
     }
   }
   await ensurePackages(pyodide, ['scipy', 'scikit-learn'], request.id);
-  progress(request.id, 'analyze', request.config.pls?.enabled ? '前処理、PCA、Aquagram、PLSの二重交差検証を計算しています。' : '前処理、主成分分析、Aquagramを計算しています。');
+  progress(request.id, 'analyze', request.config.nativePlsr?.enabled && request.config.analysisEngine === 'aquap2py' ? '前処理、PCA、Aquagram、aquap2方式PLSR・交差検証を計算しています。' : request.config.pls?.enabled ? '前処理、PCA、Aquagram、PLSの二重交差検証を計算しています。' : '前処理、主成分分析、Aquagramを計算しています。');
   pyodide.globals.set('_config_json', JSON.stringify(request.config));
   try {
     return await jsonResult<AnalysisResult>(pyodide, `
 if _dataset is None:
     raise ValueError('先にデータを読み込むか、人工データを選択してください。')
-_json.dumps(analyze(_dataset, _json.loads(_config_json)), ensure_ascii=False, allow_nan=False)
+_json.dumps(analyze(_dataset, _json.loads(_config_json), calibration=_calibration_dataset), ensure_ascii=False, allow_nan=False)
 `);
   } finally {
     clearGlobals(pyodide, ['_config_json']);
@@ -189,7 +196,7 @@ _json.dumps(analyze(_dataset, _json.loads(_config_json)), ensure_ascii=False, al
 scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   if (!request || !Number.isSafeInteger(request.id)) return;
-  if (!['load', 'demo', 'analyze'].includes(request.kind)) {
+  if (!['load', 'loadCalibration', 'demo', 'analyze'].includes(request.kind)) {
     scope.postMessage({ id: request.id, kind: 'error', message: '解析環境への要求が不正です。' });
     return;
   }

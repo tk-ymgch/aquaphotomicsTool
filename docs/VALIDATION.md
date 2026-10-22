@@ -1,5 +1,43 @@
 # 検証記録
 
+## v1.6：aquap2py 0.2.0の温度校正・AUC・PLSR
+
+対象は非公式のPython部分移植aquap2py 0.2.0、参照はインストール済みaquap2 **0.4.5 / commit `d31c1231bf71f0e73f1a630a32934602782be488`** です。全API互換を示す `completeCompatibility` はfalseを維持します。この節の数値は通常Pythonと開発用の実R公開API oracleの確認であり、利用者入力を毎回Rで照合した記録ではありません。以下の旧版各節は当時の確認範囲として読み分けます。
+
+通常Pythonの全テストは **253 passed**。温度校正モデル、10モードの変換・対照群差・単位、未対応条件の明示拒否、PLS1/CV/adjCV・選択・処理済X予測と、既存解析・入出力の回帰を含みます。Node 9本、設定24チェック、型検査・本番ビルドも成功しました。隔離wheelの通常Python検証は成功し、確定コミットからの再構築記録はQAへ保存します。ローカルブラウザーで校正CSV、設定JSONの保存・再読込、温度AUCと固定成分PLSRの同時実行・結果ZIP保存を確認しました。ブラウザー出力の数値再計算・公開環境の証拠は、日付付きQAレポートで別に記録します。
+
+| 現版の正本 | 条件と比較件数 | 結果・最大絶対差 |
+| --- | --- | --- |
+| `qa/v1.6-classic-verification.json` | 人工24×61、不均等3群、12条件・60数値チェック | PASS。前処理1.0436e-14、PCA符号整列後scores1.2088e-14/loadings1.0957e-13、寄与率7.7716e-16、classic AQ2.7089e-13 |
+| `qa/v1.6-temperature-verification.json` | 人工測定12×301、校正63×301、26条件・1,026 scalar値 | PASS。全体2.5206e-8、等間隔24条件9.0564e-10 |
+| `qa/v1.6-plsr-verification.json` | 人工PLS1、13条件・420数値チェック | PASS。4.9977e-10。420は配列・指標の比較チェック件数 |
+
+classic/温度AQは事前の絶対許容 `1e-8`・相対許容 `1e-7`、PLSRは絶対・相対とも `1e-8` で判定しました。3正本とも `sourceHarnessUsed=false` で、インストール済み固定R packageの公開APIを実行しています。各reportの数値source SHAと全人工入出力SHAを実ファイルへ照合しました。旧 `qa/v1.5-aquap2py-verification.json` は0.1.0 snapshotの履歴で、その古い全file SHAを現版全体の検証結果へ読み替えません。
+
+### 基礎数値の現版再照合
+
+PythonとRへ同じ生matrixを渡し、R側も公開 `gdmm` の `dpt.pre` でSG/SNV/MSCを実行しました。SGはp2/n21/m0、p2/n11/m0・1・2の端点/ts=1、SGとSNV/MSCの両順序、不等間隔の無補間を含みます。平均中心化・非標準化PCAの先頭5成分は符号整列し、寄与率も比較しています。classic/classic-diffはAQ内部SG3・MSCなし・標本SDのままで、母SDとの換算を使いません。予約名global、日本語・引用符・改行labels、行順・ID・群・波長の往復、定数SNVと同一スペクトルの2退化条件の双方拒否を確認しました。入力/出力は `qa/v1.6-classic-oracle-verified/` にあります。
+
+### 温度校正・AUC/sfc
+
+公開 `ttap→saveAQdata→gdmm→getcm` により校正R-dataを作り、全10非classic modeを12/15座標で比較しました。校正SG17、測定AQ内部SG21、sfc内部MSC off/on、TCalib全範囲/対称指定、不等間隔と名目band端点が測定格子にない条件を含みます。校正はSG後に1300〜1600 nmへcutして温度別平均、測定は行別の固定帯polygon面積/全入力幅polygon面積を群平均します。%の校正min/maxは指定2端点から求め、範囲内の全温度からは求めません。
+
+tnはTexpの校正%を減算し、dceは校正幅で℃相当へ換算、diffは対照群を減算します。DCEは推定試料温度ではありません。sfcは未平滑化校正平均を中心とする測定RMS（分母n−1）を使い、校正SDを分母にしません。AUCにはSD除算がなく、軸のnmは固定帯中央です。0〜100%範囲外をclipせず、分母・実band範囲・単位・処理順を保存します。
+
+初版の対応は観測済みTCalib両端とTexpへ限定しています。未観測温度のrobust quadratic LOESS、bootstrap、観測数random補正は明示拒否する4条件を確認しました。sfcは測定格子と校正cut格子の一致が必要です。outlier検出は行わず、R oracleでも強制除外を明示的に解除した人工校正を使います。小さい校正endpoint差により丸め誤差が増幅した初期狭帯profileは別記録へ残し、良好な校正と混同しません。正本の入力/出力は `qa/v1.6-temperature-oracle-final-verified/`、詳細は `qa/v1.6-temperature-contract.md` です。
+
+### aquap2方式PLSR
+
+公開 `gdmm` と `plot_pls_indepPred` を用い、PLS1/kernelpls、平均中心化・非スケーリング、固定/自動成分、LOO/leave-one-group-outを比較しました。native前処理、model/modelPlusの係数・intercept・fit/residual、CV/adjCV・PRESS・誤差曲線、ラベルなしを含む処理済み未知Xの予測を確認しています。結果は `qa/v1.6-plsr-oracle-final-verified/` にあります。
+
+全Xへ前処理してからCVし、反復adjCVの成分選択を行うaquap2経路です。学習区画内で前処理し、内側で成分選択するWorkbench標準Pythonの外側nested CVとは異なり、選択に使ったCV誤差を独立な外側性能と解釈しません。乱数CVの固定成分1条件はR由来の具体的segmentsを再生して照合しました。Rと同じseed系列、乱数CVの自動選択履歴、PLSR固有outlier除外、多応答/他PLS method、未知raw Xへの自動前処理は対象外です。
+
+### 再実行と未確認範囲
+
+通常Python回帰は `python -m pytest tests -q` で実行します。実R oracleは固定版を導入した開発環境でのみ使い、`scripts/compare_aquap2py.py`、`scripts/compare_temperature.py`、`scripts/compare_plsr.py` に既存結果を上書きしない新しい `--output` と `--report` を指定します。R library・home・settingsは隔離し、通常Web解析のR依存にはしません。
+
+実測データの科学的妥当性、全装置IO・metadata/S4・実験設計・描画、LOESS/boot/NR、R RNG、全PLSR method、上限近傍の端末別性能は確認結果へ含めません。公開・ブラウザーの最終確認はリリースQA記録を参照してください。[対応範囲と根拠](AQUAP2PY_COVERAGE.md)に機能別の条件を記録しています。
+
 ## v1.4：インストール済みaquap2本体の統合
 
 共通のPython前処理済み行列を隔離R環境へ送り、インストール済みaquap2 0.4.5の公開`gdmm`で平均中心化・標準化なしのPCAとclassic/classic-diffを実行する経路を追加しました。比較計画は、同一行列・試料順・実波長でPCA成分の符号を整列し、Aquagramはddof0→ddof1の換算を明示して照合するものです。必須の恒等SG3/p2/m0とその丸め差も各実行に記録します。

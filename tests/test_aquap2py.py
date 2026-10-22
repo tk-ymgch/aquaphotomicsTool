@@ -103,7 +103,7 @@ def test_dataset_copy_and_unicode_labels_gdmm_provenance_and_getcm_copy():
     steps = [{"method": "msc", "reference": x.mean(0)}, {"method": "sgolay", "window": 7}]
     cube = ap.gdmm(dataset, steps=steps, components=5, aquagram_wavelengths=w[[1, 12, 25]], reference="group:global")
     assert cube["provenance"]["rExecuted"] is False
-    assert cube["provenance"]["version"] == ap.__version__ == "0.1.0"
+    assert cube["provenance"]["version"] == ap.__version__ == "0.2.0"
     assert cube["provenance"]["sgTs"] == cube["provenance"]["snvDdof"] == 1
     json.dumps(cube, ensure_ascii=False, allow_nan=False)
     extracted = ap.getcm(cube, "pca")

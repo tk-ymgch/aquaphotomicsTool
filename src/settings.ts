@@ -3,7 +3,7 @@ import type { AnalysisConfig, DatasetSummary, PLSConfig } from './types';
 export interface SettingsDocument {
   format: 'aquaphotomics-workbench-settings';
   schemaVersion: 1;
-  appVersion: '1.5';
+  appVersion: '1.6';
   createdAt: string;
   source: { name: string; sheet: string | null } | null;
   config: AnalysisConfig;
@@ -176,6 +176,48 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
     };
     config.pls = parsed;
   }
+  if (input.nativeAquagram !== undefined) {
+    const aq = record(input.nativeAquagram, '温度校正Aquagram設定');
+    if (!Array.isArray(aq.tCalib) || aq.tCalib.length !== 2) fail('TCalibは下限・上限の2値にしてください。');
+    const low = number(aq.tCalib[0], 'TCalib下限'), high = number(aq.tCalib[1], 'TCalib上限');
+    if (low >= high) fail('TCalib下限は上限より小さくしてください。');
+    const sg = integer(aq.smoothN, 'Aquagram内部SG', 3, 501);
+    const calibrationSg = integer(aq.calibrationSmoothN, '校正内部SG', 3, 501);
+    if (sg % 2 !== 1 || calibrationSg % 2 !== 1) fail('校正・Aquagram内部SGは奇数にしてください。');
+    const value: NonNullable<AnalysisConfig['nativeAquagram']> = {
+      enabled: boolean(aq.enabled, '温度校正Aquagramの有効設定'),
+      mode: choice(aq.mode, ['sfc','sfc-diff','aucs','aucs-diff','aucs.tn','aucs.tn-diff','aucs.tn.dce','aucs.tn.dce-diff','aucs.dce','aucs.dce-diff'], '温度校正Aquagram方式'),
+      coordinateSystem: choice(aq.coordinateSystem, ['ot1.12','ot1.15'], '水座標'),
+      temperatureColumn: aq.temperatureColumn === null ? null : text(aq.temperatureColumn, '校正温度列'),
+      calibrationSmoothN: calibrationSg, tCalib: [low, high], tExp: number(aq.tExp, 'Texp'), smoothN: sg,
+      msc: boolean(aq.msc, 'Aquagram内部MSC'),
+      referenceGroup: aq.referenceGroup === null ? null : text(aq.referenceGroup, '温度校正Aquagram対照群'),
+    };
+    if (aq.calibrationSource !== undefined) {
+      const source = record(aq.calibrationSource, '温度校正ファイル情報');
+      const sha256 = text(source.sha256, '校正データSHA-256');
+      if (!/^[a-f0-9]{64}$/.test(sha256)) fail('校正データSHA-256の形式が不正です。');
+      value.calibrationSource = {name:text(source.name,'校正ファイル名'),sheet:source.sheet === null ? null : text(source.sheet,'校正シート名'),sha256};
+    }
+    if (value.enabled && value.temperatureColumn === null) fail('温度校正列を指定してください。');
+    if (value.enabled && value.mode.endsWith('-diff') && !value.referenceGroup) fail('差分Aquagramの対照群名を指定してください。');
+    config.nativeAquagram = value;
+  }
+  if (input.nativePlsr !== undefined) {
+    const plsr = record(input.nativePlsr, 'aquap2方式PLSR設定');
+    const value: NonNullable<AnalysisConfig['nativePlsr']> = {
+      enabled:boolean(plsr.enabled,'aquap2方式PLSRの有効設定'),
+      targetColumn:column(plsr.targetColumn,'aquap2方式PLSRの目的変数',columns),
+      components:plsr.components === null ? null : integer(plsr.components,'PLSR成分数',1,30),
+      validation:choice(plsr.validation,['LOO','group'],'aquap2方式PLSRのCV方式'),
+      cvGroupColumn:column(plsr.cvGroupColumn,'PLSRのCV群列',columns),
+    };
+    if (value.enabled && value.targetColumn === null) fail('aquap2方式PLSRの目的変数を指定してください。');
+    if (value.enabled && (selected.includes(value.targetColumn!) || value.targetColumn === idColumn || value.targetColumn === value.cvGroupColumn)) fail('aquap2方式PLSRの目的変数を波長列・試料ID・CV群列と分けてください。');
+    if (value.enabled && value.validation === 'group' && value.cvGroupColumn === null) fail('PLSRのCV群列を指定してください。');
+    if (value.enabled && value.validation === 'group' && selected.includes(value.cvGroupColumn!)) fail('PLSRのCV群列を波長列と分けてください。');
+    config.nativePlsr = value;
+  }
   return config;
 }
 
@@ -183,7 +225,7 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
 export function createSettingsDocument(config: AnalysisConfig, source: { name: string; sheet?: string | null } | null): SettingsDocument {
   safeTree(config); safeTree(source);
   return {
-    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.5',
+    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.6',
     createdAt: new Date().toISOString(), source: sourceMetadata(source), config: validateConfig(config, null),
   };
 }
@@ -197,7 +239,7 @@ export function parseSettingsDocument(textInput: string, summary: DatasetSummary
   let config: unknown = document;
   if (own(document, 'format')) {
     if (document.format !== 'aquaphotomics-workbench-settings') fail('この設定ファイルのformatには対応していません。');
-    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4', '1.5'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
+    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4', '1.5', '1.6'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
     if (typeof document.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(document.createdAt) || !Number.isFinite(Date.parse(document.createdAt))) fail('設定の作成日時が不正です。');
     sourceMetadata(document.source);
     config = document.config;

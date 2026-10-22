@@ -9,7 +9,7 @@ import numpy as np
 from .preprocessing import _finite_result, _int, _matrix, preprocess, sgolay
 
 REFERENCE_COMMIT = "d31c1231bf71f0e73f1a630a32934602782be488"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def _vector(value: Any, size: int, label: str) -> np.ndarray:
@@ -126,6 +126,7 @@ def classic_aquagram(matrix: Any, wavelengths: Any, groups: Any, targets: Any,
 
 def gdmm(dataset: SpectralData, *, steps: list[dict] | None = None, components: int = 5,
          aquagram_wavelengths: Any, reference: str = "global", aq_smooth_n: int = 3,
+         temperature: dict | None = None, plsr: dict | None = None,
          **unsupported) -> dict:
     """Small Python orchestration API, not full R gdmm argument compatibility."""
     if unsupported:
@@ -144,23 +145,38 @@ def gdmm(dataset: SpectralData, *, steps: list[dict] | None = None, components: 
         if isinstance(value, list):
             return [json_value(v) for v in value]
         return value
-    return {"preprocessed": transformed.tolist(), "pca": pca(transformed, components),
-            "aquagram": classic_aquagram(transformed, dataset.wavelengths, dataset.groups,
-                                          aquagram_wavelengths, reference, aq_smooth_n),
+    if temperature is not None:
+        if not isinstance(temperature, dict):
+            raise ValueError("温度校正Aquagramには校正モデルと明示設定を指定してください。")
+        from .temperature import temperature_aquagram
+        aquagram = temperature_aquagram(transformed, dataset.wavelengths, dataset.groups, **temperature)
+    else:
+        aquagram = classic_aquagram(transformed, dataset.wavelengths, dataset.groups,
+                                   aquagram_wavelengths, reference, aq_smooth_n)
+    result = {"preprocessed": transformed.tolist(), "pca": pca(transformed, components),
+            "aquagram": aquagram,
             "provenance": {"engine": "aquap2py", "version": VERSION, "implementation": "numpy-scipy",
                            "rExecuted": False, "rPackageApiExecuted": False,
                            "referenceAquap2Version": "0.4.5", "referenceCommit": REFERENCE_COMMIT,
                            "steps": json_value(requested_steps), "snvDdof": 1, "sgTs": 1,
                            "irregularWavelengthPolicy": "sample-index-without-resampling",
-                           "pcaCenter": True, "pcaScale": False, "aquagramDdof": 1,
-                           "aquagramSmoothN": aq_smooth_n, "aquagramInternalMsc": False,
-                           "supportedModels": ["pca", "classic", "classic-diff"],
-                           "unsupported": ["PLS", "temperature calibration/AUC/sfc", "classification", "bootstrap"]}}
+                           "pcaCenter": True, "pcaScale": False, "aquagramDdof": aquagram.get("ddof"),
+                           "aquagramSmoothN": temperature.get("smooth_n", 21) if temperature else aq_smooth_n,
+                           "aquagramInternalMsc": temperature.get("msc", False) if temperature else False,
+                           "supportedModels": ["pca", aquagram.get("mode", "classic")],
+                           "unsupported": ["classification", "bootstrap", "complete R API compatibility"]}}
+    if plsr is not None:
+        if not isinstance(plsr, dict):
+            raise ValueError("PLSRには数値目的変数と明示設定を指定してください。")
+        from .plsr import plsr as native_plsr
+        result["plsr"] = native_plsr(transformed, **plsr)
+        result["provenance"]["supportedModels"].append("plsr")
+    return result
 
 
 def getcm(cube: dict, model: str = "pca") -> dict:
-    if model not in {"pca", "aquagram"}:
-        raise ValueError("getcmはpcaまたはaquagramに対応しています。PLS・分類モデルは未対応です。")
+    if model not in {"pca", "aquagram", "plsr"}:
+        raise ValueError("getcmはpca、aquagram、限定PLSRに対応しています。分類モデルは未対応です。")
     if not isinstance(cube, dict) or model not in cube:
         raise ValueError("gdmmで作成したcubeを指定してください。")
     return copy.deepcopy(cube[model])

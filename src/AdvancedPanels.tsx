@@ -3,6 +3,7 @@ import { ArrowUpRight, ChevronRight, CircleHelp, FlaskConical, Layers2, RotateCc
 import type { AnalysisConfig, AnalysisResult, ComparisonRun, DatasetSummary, PLSConfig, PLSResult } from './types';
 import Plot from './Plot';
 import type { Figure } from './Plot';
+import { nativePlsrFigures } from './NativeAnalysisPanel';
 import './advanced.css';
 
 const COLORS = ['#222222', '#747474', '#a5a5a5', '#484848', '#c1c1c1', '#898989'];
@@ -115,18 +116,34 @@ function meanSpectrumFigure(result: AnalysisResult): Figure {
   }), layout: { ...chartLayout('GROUP MEAN SPECTRA', '波長 / nm', result.metadata.settings.derivative ? `${result.metadata.settings.derivative}次微分後の群平均` : '前処理後の群平均信号'), margin: { l: 65, r: 22, t: 65, b: 55 } } };
 }
 
-function comparisonAquagram(result: AnalysisResult): Figure {
+function calibratedAquagram(result: AnalysisResult): boolean {
+  return !!result.aquagram.mode && !['classic', 'classic-diff'].includes(result.aquagram.mode);
+}
+function aquagramUnit(result: AnalysisResult): string {
   const aq = result.aquagram;
-  const unscaled = result.metadata.settings.aquagramReference === 'none';
+  const units: Record<string, string> = { percent: '校正AUC / %', 'percentage-point': '校正AUC差 / パーセントポイント',
+    'degC-equivalent': 'DCE / °C相当', 'degC-equivalent-deviation': 'DCE偏差 / °C相当',
+    'degC-equivalent-difference': 'DCE差 / °C相当', 'dimensionless-foreign-center-scaled': '校正中心による標準化値（無次元）' };
+  if (calibratedAquagram(result)) return aq.unit ? units[aq.unit] ?? aq.unit : '単位の記録なし';
+  return ['none', 'None'].includes(result.metadata.settings.aquagramReference) ? '前処理後の群平均値' : '標準化した群平均差（無次元）';
+}
+function aquagramScale(result: AnalysisResult): string {
+  if (calibratedAquagram(result)) return result.aquagram.mode!.startsWith('sfc') ? '校正中心からのRMS（分母 n−1）' : '面積比の校正尺度（SD不使用）';
+  if (['none', 'None'].includes(result.metadata.settings.aquagramReference)) return '標準化なし';
+  const ddof = result.aquagram.sdDdof ?? result.metadata.execution?.aquagramSdDdof;
+  return ddof === 1 ? '標本SD（n−1）' : ddof === 0 ? '母SD（n）' : 'SD定義の記録なし';
+}
+function comparisonAquagram(result: AnalysisResult): Figure {
+  const aq = result.aquagram, unit = aquagramUnit(result);
   let limit = 1;
   for (const group of aq.groups) for (const value of group.values) limit = Math.max(limit, Math.ceil(Math.abs(value) * 1.15 * 2) / 2);
   const theta = [...aq.labels, aq.labels[0]];
-  return { data: [{ type: 'scatterpolar', mode: 'lines', theta, r: theta.map(() => 0), name: unscaled ? '信号 0' : '基準 0', showlegend: false, hoverinfo: 'skip', line: { color: '#bbb', width: 1, dash: 'dot' } }, ...aq.groups.map((group, index) => ({ type: 'scatterpolar', mode: 'lines+markers', name: `${group.name} (n=${group.n})`, theta, r: [...group.values, group.values[0]], line: { color: COLORS[index % COLORS.length], width: 1.8, dash: DASHES[index % DASHES.length] }, marker: { size: 4, symbol: SYMBOLS[index % SYMBOLS.length] }, hovertemplate: '%{theta}<br>' + (unscaled ? '群平均 ' : '標準化差 ') + '%{r:.4g}<extra></extra>' }))], layout: { ...chartLayout('AQUAGRAM'), margin: { l: 58, r: 58, t: 65, b: 55 }, legend: { orientation: 'h', x: 0, y: -.1, font: { size: 9 } }, polar: { bgcolor: 'rgba(0,0,0,0)', radialaxis: { range: [-limit, limit], gridcolor: '#e2e2e2', linecolor: '#ddd', tickfont: { size: 9, color: '#999' } }, angularaxis: { direction: 'clockwise', rotation: 90, gridcolor: '#e4e4e4', linecolor: '#ddd', tickfont: { size: 9 } } } } };
+  return { data: [{ type: 'scatterpolar', mode: 'lines', theta, r: theta.map(() => 0), name: '値 0', showlegend: false, hoverinfo: 'skip', line: { color: '#bbb', width: 1, dash: 'dot' } }, ...aq.groups.map((group, index) => ({ type: 'scatterpolar', mode: 'lines+markers', name: `${group.name} (n=${group.n})`, theta, r: [...group.values, group.values[0]], line: { color: COLORS[index % COLORS.length], width: 1.8, dash: DASHES[index % DASHES.length] }, marker: { size: 4, symbol: SYMBOLS[index % SYMBOLS.length] }, hovertemplate: '%{theta}<br>' + unit + ' %{r:.4g}<extra></extra>' }))], layout: { ...chartLayout(`AQUAGRAM${aq.mode ? ' · '+aq.mode : ''} · ${unit}`), margin: { l: 58, r: 58, t: 75, b: 55 }, legend: { orientation: 'h', x: 0, y: -.1, font: { size: 9 } }, polar: { bgcolor: 'rgba(0,0,0,0)', radialaxis: { range: [-limit, limit], gridcolor: '#e2e2e2', linecolor: '#ddd', tickfont: { size: 9, color: '#999' } }, angularaxis: { direction: 'clockwise', rotation: 90, gridcolor: '#e4e4e4', linecolor: '#ddd', tickfont: { size: 9 } } } } };
 }
 
 /** The comparison viewer and ZIP export use the same group-level figures. */
 export function comparisonFigures(result: AnalysisResult): Record<string, Figure> {
-  return { group_mean_spectra: meanSpectrumFigure(result), aquagram: comparisonAquagram(result), ...(result.pls ? plsFigures(result.pls) : {}) };
+  return { group_mean_spectra: meanSpectrumFigure(result), aquagram: comparisonAquagram(result), ...(result.pls ? plsFigures(result.pls) : {}), ...(result.nativePlsr ? nativePlsrFigures(result.nativePlsr, result.spectra.wavelengths) : {}) };
 }
 
 function comparisonKey(run: ComparisonRun) {
@@ -136,18 +153,38 @@ function comparisonKey(run: ComparisonRun) {
   return JSON.stringify({ target: pls.targetColumn, method: pls.method, folds: pls.folds, seed: pls.seed, cvGroupColumn: settings?.split === 'group' ? settings.cvGroupColumn : null, evaluation: pls.ids.map((id, index) => [id, pls.fold[index], pls.observed[index]]) });
 }
 
+function nativeComparisonKey(run: ComparisonRun) {
+  const pls = run.result.nativePlsr;
+  if (!pls) return null;
+  return JSON.stringify({ target: pls.targetColumn, validation: pls.settings.validation,
+    cvGroupColumn: pls.settings.validation === 'group' ? run.result.metadata.settings.nativePlsr?.cvGroupColumn : null,
+    evaluation: pls.ids.map((id, index) => [id, pls.fold[index], pls.observed[index]]) });
+}
+function nativeValidation(run: ComparisonRun): string {
+  const result = run.result.nativePlsr;
+  if (!result) return '—';
+  return result.settings.validation === 'LOO' ? 'LOO' : result.settings.validation === 'group' ? `群単位CV / ${run.result.metadata.settings.nativePlsr?.cvGroupColumn ?? '群列の記録なし'}` : String(result.settings.validation ?? 'CV方式の記録なし');
+}
+
 export function ComparisonPanel({ runs, onRemove, onClear, onRestore, disabled }: { runs: ComparisonRun[]; onRemove: (id: string) => void; onClear: () => void; onRestore: (id: string) => void; disabled: boolean }) {
-  const [view, setView] = useState<'spectra' | 'aquagram' | 'pls'>('spectra');
+  const [view, setView] = useState<'spectra' | 'aquagram' | 'pls' | 'native-plsr'>('spectra');
   const displayed = runs.slice(0, 4);
-  const figures = useMemo(() => displayed.map(run => ({ id: run.id, figure: view === 'spectra' ? meanSpectrumFigure(run.result) : view === 'aquagram' ? comparisonAquagram(run.result) : run.result.pls ? oofFigure(run.result.pls) : null })), [runs, view]);
+  const figures = useMemo(() => displayed.map(run => ({ id: run.id, figure: view === 'spectra' ? meanSpectrumFigure(run.result) : view === 'aquagram' ? comparisonAquagram(run.result) : view === 'native-plsr' ? run.result.nativePlsr ? nativePlsrFigures(run.result.nativePlsr, run.result.spectra.wavelengths).native_plsr_predictions : null : run.result.pls ? oofFigure(run.result.pls) : null })), [runs, view]);
   const plsRuns = displayed.filter(run => run.result.pls), keys = plsRuns.map(comparisonKey);
   const compatible = plsRuns.length > 1 && keys.every(key => key === keys[0]);
+  const nativeRuns = displayed.filter(run => run.result.nativePlsr), nativeKeys = nativeRuns.map(nativeComparisonKey);
+  const nativeCompatible = nativeRuns.length > 1 && nativeKeys.every(key => key === nativeKeys[0]);
   const rows: { name: string; value: (run: ComparisonRun) => string }[] = [
-    { name: 'PCA・Aquagramの計算元', value: run => { const e = run.result.metadata.execution; return e?.engine === 'aquap2' ? `aquap2 ${e.aquap2Version ?? '—'} / ${e.rVersion ?? '—'} · R本体` : e?.engine === 'aquap2py' ? `aquap2py ${e.implementationVersion ?? '—'} · ブラウザー内` : 'Workbench標準Python · ブラウザー内'; } },
-    { name: 'R本体APIの実行', value: run => run.result.metadata.execution?.packageApiExecuted ? 'あり' : 'なし' },
+    { name: 'PCA・Aquagramの計算元', value: run => { const e = run.result.metadata.execution; return e?.engine === 'aquap2' ? `aquap2 ${e.aquap2Version ?? '—'} / ${e.rVersion ?? '—'} · R本体` : e?.engine === 'aquap2py' ? `aquap2py ${e.implementationVersion ?? '—'} · ブラウザー内` : e?.engine === 'python' ? 'Workbench標準Python · ブラウザー内' : '実行エンジンの記録なし'; } },
+    { name: 'R本体APIの実行', value: run => run.result.metadata.execution ? run.result.metadata.execution.packageApiExecuted ? 'あり' : 'なし' : '記録なし' },
     { name: '参照aquap2版', value: run => run.result.metadata.execution?.referenceAquap2Version ?? run.result.metadata.execution?.aquap2Version ?? '—' },
-    { name: 'AquagramのSD', value: run => { const e = run.result.metadata.execution, ref = run.result.metadata.settings.aquagramReference; return ref === 'none' || ref === 'None' ? '標準化なし' : (run.result.aquagram.sdDdof ?? e?.aquagramSdDdof) === 1 ? '標本SD（n−1）' : (run.result.aquagram.sdDdof ?? e?.aquagramSdDdof) === 0 ? '母SD（n）' : 'SD定義の記録なし'; } },
-    { name: '前処理方式', value: run => run.result.metadata.settings.analysisEngine === 'aquap2py' ? run.result.metadata.settings.pipelineMode === 'legacy-python' ? 'SG → 散乱補正' : '散乱補正 → SG' : run.result.metadata.settings.pipelineMode === 'legacy-python' ? '旧Python互換' : '標準方式' },
+    { name: 'Aquagramの方式', value: run => run.result.aquagram.mode ?? (['none','None'].includes(run.result.metadata.settings.aquagramReference) ? '群平均値' : 'Workbench標準化差') },
+    { name: 'Aquagramの表示量・単位', value: run => aquagramUnit(run.result) },
+    { name: 'Aquagramの標準化・校正', value: run => aquagramScale(run.result) },
+    { name: 'Aquagramの座標', value: run => `${run.result.aquagram.coordinateRanges ? '帯域: ' : '単一波長: '}${run.result.aquagram.labels.join(' / ')}` },
+    { name: '温度校正条件', value: run => { const aq = run.result.metadata.settings.nativeAquagram; return calibratedAquagram(run.result) && aq ? `${aq.coordinateSystem} / TCalib ${aq.tCalib[0]}–${aq.tCalib[1]} °C / Texp ${aq.tExp} °C / 校正SG ${aq.calibrationSmoothN} / 測定SG ${aq.smoothN}` : '—'; } },
+    { name: '温度校正ファイル', value: run => { const source = run.result.metadata.settings.nativeAquagram?.calibrationSource; return calibratedAquagram(run.result) ? source ? `${source.name}${source.sheet ? ' / '+source.sheet : ''} / SHA-256 ${source.sha256}` : '識別情報の記録なし' : '—'; } },
+    { name: '前処理方式', value: run => run.result.metadata.execution?.preprocessingEngine === 'aquap2py' ? run.result.metadata.settings.pipelineMode === 'legacy-python' ? 'SG → 散乱補正' : '散乱補正 → SG' : run.result.metadata.settings.pipelineMode === 'legacy-python' ? '旧Python互換' : '標準方式' },
     { name: '前処理', value: run => preprocessing(run.result) },
     { name: '波長範囲', value: run => `${run.result.metadata.range[0]}–${run.result.metadata.range[1]} nm` },
     { name: '試料数 × 波長数', value: run => `${run.result.metadata.samples} × ${run.result.metadata.variables}` },
@@ -156,16 +193,29 @@ export function ComparisonPanel({ runs, onRemove, onClear, onRestore, disabled }
     { name: 'PC1 寄与率', value: run => percent(run.result.pca.explainedVariance[0] ?? NaN) },
     { name: 'PC1 + PC2 累積寄与率', value: run => run.result.pca.explainedVariance.length >= 2 ? percent(run.result.pca.explainedVariance.slice(0, 2).reduce((sum, n) => sum + n, 0)) : '第2成分なし' },
     { name: 'Aquagramの基準', value: run => run.result.aquagram.reference },
-    { name: 'PLS目的変数', value: run => run.result.pls?.targetColumn ?? 'PLSなし' },
-    { name: 'PLS分割条件', value: run => run.result.pls ? `${run.result.pls.method === 'nested-group-kfold' ? 'GroupKFold' : 'KFold'} / ${run.result.pls.folds}分割 / seed ${run.result.pls.seed}${run.result.metadata.settings.pls?.split === 'group' ? ` / 群列 ${run.result.metadata.settings.pls.cvGroupColumn}` : ''}` : '—' },
-    { name: '外側OOF RMSECV', value: run => run.result.pls ? number(run.result.pls.metrics.rmseCV) : '—' },
-    { name: '外側OOF MAE', value: run => run.result.pls ? number(run.result.pls.metrics.maeCV) : '—' },
-    { name: '外側OOF R²', value: run => run.result.pls ? number(run.result.pls.metrics.r2CV) : '—' },
-    { name: '基準モデル RMSECV', value: run => run.result.pls ? number(run.result.pls.metrics.baselineRmseCV) : '—' },
-    { name: 'PLS最終成分数', value: run => run.result.pls ? String(run.result.pls.selectedComponents) : '—' },
+    { name: 'Nested PLS 目的変数', value: run => run.result.pls?.targetColumn ?? '未実行' },
+    { name: 'Nested PLS 分割条件', value: run => run.result.pls ? `${run.result.pls.method === 'nested-group-kfold' ? 'GroupKFold' : 'KFold'} / ${run.result.pls.folds}分割 / seed ${run.result.pls.seed}${run.result.metadata.settings.pls?.split === 'group' ? ` / 群列 ${run.result.metadata.settings.pls.cvGroupColumn}` : ''}` : '—' },
+    { name: 'Nested PLS 外側OOF RMSECV', value: run => run.result.pls ? number(run.result.pls.metrics.rmseCV) : '—' },
+    { name: 'Nested PLS 外側OOF MAE', value: run => run.result.pls ? number(run.result.pls.metrics.maeCV) : '—' },
+    { name: 'Nested PLS 外側OOF R²', value: run => run.result.pls ? number(run.result.pls.metrics.r2CV) : '—' },
+    { name: 'Nested PLS 基準RMSECV', value: run => run.result.pls ? number(run.result.pls.metrics.baselineRmseCV) : '—' },
+    { name: 'Nested PLS 最終成分数', value: run => run.result.pls ? String(run.result.pls.selectedComponents) : '—' },
+    { name: 'native PLSR 目的変数', value: run => run.result.nativePlsr?.targetColumn ?? '未実行' },
+    { name: 'native PLSR CV条件', value: nativeValidation },
+    { name: 'native PLSR 成分選択', value: run => run.result.nativePlsr ? `${run.result.nativePlsr.selectedComponents}成分 / ${run.result.nativePlsr.selection.mode === 'fixed' ? '固定' : '反復調整CVによる自動選択'}` : '—' },
+    { name: 'native PLSR CV RMSE', value: run => run.result.nativePlsr ? number(run.result.nativePlsr.metrics.rmseCV) : '—' },
+    { name: 'native PLSR 調整CV RMSE', value: run => run.result.nativePlsr ? number(run.result.nativePlsr.metrics.rmseAdjCV) : '—' },
+    { name: 'native PLSR CV R²', value: run => run.result.nativePlsr ? number(run.result.nativePlsr.metrics.r2CV) : '—' },
   ];
+  const viewTitle = view === 'spectra' ? '群平均スペクトル' : view === 'aquagram' ? 'Aquagram' : view === 'native-plsr' ? 'native PLSR CV予測' : 'Nested PLS 外側OOF予測';
+  const chartNote = view === 'spectra' ? '各条件で前処理した群平均スペクトルです。異なる前処理による信号値の大きさを、そのまま優劣として解釈しないでください。' : view === 'aquagram' ? 'エンジン・方式・校正条件・単位・SD定義・基準・座標・前処理を確認してください。AUC帯の面積比、sfcの校正中心による標準化値、classicの標準化差は異なる量です。DCEは実温度の推定ではありません。' : view === 'native-plsr' ? 'native CVの観測値と予測値です。自動成分選択に使うCV誤差は独立の性能評価ではありません。Nested PLSの外側OOF値と同じ評価として比較しないでください。' : '外側OOFの観測値と予測値を条件ごとに表示します。目的変数・分割条件・評価試料が一致するNested PLSの結果を参考比較してください。';
   if (!displayed.length) return <section className="glass-panel adv-comparison-empty"><Layers2 size={31} strokeWidth={1.2} /><div className="eyebrow">ANALYSIS COMPARISON</div><h2>比較する解析条件がありません</h2><p>同一データの解析結果を条件名とともに保存すると、最大4条件を一覧と図で比較できます。前処理・PCA・Aquagram・PLSの設定を変更して再解析し、比較対象に追加してください。</p><div><SlidersHorizontal size={15} /> 解析結果の表示中に、比較用の条件を保存できます。</div></section>;
-  return <div className="adv-comparison-panel"><div className="adv-comparison-header"><div><h2>保存した解析条件 <span>{displayed.length} / 4</span></h2><p>同一データに対する解析条件を並べて確認します。図は条件ごとに独立して表示します。</p></div><button className="button outline" disabled={disabled} onClick={onClear}><Trash2 size={13} /> すべて解除</button></div><div className="glass-panel adv-comparison-table"><div className="adv-table-scroll"><table><thead><tr><th scope="col">比較項目</th>{displayed.map((run, index) => <th scope="col" key={run.id}><div className="adv-run-heading"><span className="adv-run-index">{String(index + 1).padStart(2, '0')}</span><div><strong title={run.name}>{run.name}</strong><small>{time(run.createdAt)}</small></div><button className="icon-button" disabled={disabled} aria-label={`${run.name}を比較から解除`} onClick={() => onRemove(run.id)}><Trash2 size={13} /></button></div><button className="adv-restore" disabled={disabled} onClick={() => onRestore(run.id)}><RotateCcw size={11} /> 設定を復元<ArrowUpRight size={11} /></button></th>)}</tr></thead><tbody>{rows.map(row => <tr key={row.name}><th scope="row">{row.name}</th>{displayed.map(run => <td key={run.id}>{row.value(run)}</td>)}</tr>)}</tbody></table></div></div><div className={`adv-comparability ${compatible ? 'adv-comparable' : ''}`}><CircleHelp size={15} /><p>{plsRuns.length < 2 ? 'PLS性能の比較には、PLS回帰を含む条件が2件以上必要です。' : compatible ? 'PLSの目的変数・分割条件・評価試料が一致しています。外側OOF性能を参考比較できます。ここでの条件比較は、別の独立評価を代替するものではありません。' : 'PLSの目的変数・分割条件・評価試料のいずれかが異なります。表示された性能指標を条件間で直接比較しないでください。'}</p></div><section className="adv-small-multiples"><div className="adv-comparison-chart-header"><div className="segmented" aria-label="条件別グラフの切り替え"><button aria-pressed={view === 'spectra'} onClick={() => setView('spectra')}>群平均スペクトル</button><button aria-pressed={view === 'aquagram'} onClick={() => setView('aquagram')}>Aquagram</button><button aria-pressed={view === 'pls'} onClick={() => setView('pls')}>PLS OOF予測</button></div><span>軸の範囲は各図で個別に設定</span></div><p className="adv-comparison-chart-note">{view === 'spectra' ? '各条件で前処理した群平均スペクトルです。異なる前処理による信号値の大きさを、そのまま優劣として解釈しないでください。' : view === 'aquagram' ? '各条件で計算したAquagramです。エンジン・SD定義・基準・実波長・前処理を確認してください。母SDと標本SDの値は、換算せず同一値として比較できません。' : '外側OOFの観測値と予測値を、条件ごとに表示します。目的変数・分割条件・評価試料が一致する結果を参考比較してください。'}</p><div className="adv-multiple-grid">{displayed.map((run, index) => <article className="glass-panel adv-multiple" key={run.id}><div className="adv-multiple-heading"><span className="adv-run-index">{String(index + 1).padStart(2, '0')}</span><div><h3 title={run.name}>{run.name}</h3><p>{view === 'aquagram' ? `基準：${run.result.aquagram.reference}` : view === 'pls' ? `目的変数：${run.result.pls?.targetColumn ?? '未設定'}` : preprocessing(run.result)}</p></div></div>{figures[index]?.figure ? <Plot figure={figures[index].figure!} label={`${run.name}の${view === 'spectra' ? '群平均スペクトル' : view === 'aquagram' ? 'Aquagram' : 'PLS OOF予測'}`} className="adv-small-plot" /> : <div className="adv-missing-pls"><FlaskConical size={23} strokeWidth={1.3} /><p>この条件にはPLS解析結果がありません。</p></div>}</article>)}</div></section></div>;
+  return <div className="adv-comparison-panel">
+    <div className="adv-comparison-header"><div><h2>保存した解析条件 <span>{displayed.length} / 4</span></h2><p>同一データに対する解析条件を並べて確認します。図は条件ごとに独立して表示します。</p></div><button className="button outline" disabled={disabled} onClick={onClear}><Trash2 size={13} /> すべて解除</button></div>
+    <div className="glass-panel adv-comparison-table"><div className="adv-table-scroll"><table><thead><tr><th scope="col">比較項目</th>{displayed.map((run, index) => <th scope="col" key={run.id}><div className="adv-run-heading"><span className="adv-run-index">{String(index + 1).padStart(2, '0')}</span><div><strong title={run.name}>{run.name}</strong><small>{time(run.createdAt)}</small></div><button className="icon-button" disabled={disabled} aria-label={`${run.name}を比較から解除`} onClick={() => onRemove(run.id)}><Trash2 size={13} /></button></div><button className="adv-restore" disabled={disabled} onClick={() => onRestore(run.id)}><RotateCcw size={11} /> 設定を復元<ArrowUpRight size={11} /></button></th>)}</tr></thead><tbody>{rows.map(row => <tr key={row.name}><th scope="row">{row.name}</th>{displayed.map(run => <td key={run.id}>{row.value(run)}</td>)}</tr>)}</tbody></table></div></div>
+    <div className={`adv-comparability ${compatible ? 'adv-comparable' : ''}`}><CircleHelp size={15} /><p>{plsRuns.length < 2 ? 'Nested PLSの外側OOF比較には、その結果を含む条件が2件以上必要です。' : compatible ? 'Nested PLSの目的変数・分割条件・評価試料が一致しています。外側OOF値を参考比較できます。条件比較は、別の独立評価を代替するものではありません。' : 'Nested PLSの目的変数・分割条件・評価試料が異なります。性能指標を条件間で直接比較しないでください。'}{nativeRuns.length > 0 && <><br />{nativeRuns.length < 2 ? 'native PLSRは外側nested CVではありません。表示されたnative CV値をNested PLSの外側OOF性能と同じ評価として順位づけしないでください。' : nativeCompatible ? 'native PLSRは目的変数・CV分割・評価試料が一致していますが、成分選択に用いたCV値は独立の性能ではありません。Nested PLSの外側OOF値とは分けて確認してください。' : 'native PLSRは目的変数・CV分割・評価試料が異なります。native CV値同士の直接比較と、Nested PLSの外側OOF値との混同を避けてください。'}</>}</p></div>
+    <section className="adv-small-multiples"><div className="adv-comparison-chart-header"><div className="segmented" aria-label="条件別グラフの切り替え"><button type="button" aria-pressed={view === 'spectra'} onClick={() => setView('spectra')}>群平均スペクトル</button><button type="button" aria-pressed={view === 'aquagram'} onClick={() => setView('aquagram')}>Aquagram</button><button type="button" aria-pressed={view === 'pls'} onClick={() => setView('pls')} aria-label="Nested PLSの外側OOF予測">Nested OOF</button><button type="button" aria-pressed={view === 'native-plsr'} onClick={() => setView('native-plsr')} aria-label="native PLSRのCV予測">native CV</button></div><span>軸の範囲は各図で個別に設定</span></div><p className="adv-comparison-chart-note">{chartNote}</p>
+      <div className="adv-multiple-grid">{displayed.map((run, index) => <article className="glass-panel adv-multiple" key={run.id}><div className="adv-multiple-heading"><span className="adv-run-index">{String(index + 1).padStart(2, '0')}</span><div><h3 title={run.name}>{run.name}</h3><p>{view === 'aquagram' ? `${run.result.aquagram.mode ?? '基準'}: ${run.result.aquagram.reference} / ${aquagramUnit(run.result)}` : view === 'native-plsr' ? `目的変数: ${run.result.nativePlsr?.targetColumn ?? '未実行'} / ${nativeValidation(run)} / 外側nested評価なし` : view === 'pls' ? `目的変数: ${run.result.pls?.targetColumn ?? '未実行'} / 外側OOF` : preprocessing(run.result)}</p></div></div>{figures[index]?.figure ? <Plot figure={figures[index].figure!} label={`${run.name}の${viewTitle}`} className="adv-small-plot" /> : <div className="adv-missing-pls"><FlaskConical size={23} strokeWidth={1.3} /><p>この条件には{view === 'native-plsr' ? 'native PLSR' : 'Nested PLS'}の結果がありません。</p></div>}</article>)}</div>
+    </section>
+  </div>;
 }
-
-

@@ -7,7 +7,7 @@ const csv = '\uFEFFsample_id,group,value\r\n001,"群, A",1.2345678901234567\r\n"
 const rows = parseCsv(csv);
 assert.deepEqual(rows, [['sample_id','group','value'],['001','群, A','1.2345678901234567'],['試料"二\n行','対照','']]);
 assert.deepEqual(parseCsv('a,b\n1,2'), [['a','b'],['1','2']]);
-const result = { exports: { 'data/preprocessed.csv': csv, 'data/pca_scores.csv': 'id,PC1\n001,0.125\n', 'settings.json': '{}' }, metadata:{samples:2,variables:3,settings:{pipelineMode:'legacy-python',missing:'mean',aquagramReference:'none',scatter:'snv',smooth:true,derivative:1}},pca:{explainedVariance:[.8,.2]} };
+const result = { exports: { 'data/preprocessed.csv': csv, 'data/pca_scores.csv': 'id,PC1\n001,0.125\n', 'settings.json': '{}' }, metadata:{samples:2,variables:3,settings:{pipelineMode:'legacy-python',missing:'mean',aquagramReference:'none',scatter:'snv',smooth:true,derivative:1}},pca:{explainedVariance:[.8,.2]},aquagram:{wavelengths:[1340,1400,1450],groups:[],reference:'none',definition:'processed group mean'} };
 const tables = getResultTables(result);
 assert.equal(tables.length, 2); assert.equal(tables[0].exportPath, 'data/preprocessed.csv');
 assert.deepEqual(tables[0].rows, rows.slice(1));
