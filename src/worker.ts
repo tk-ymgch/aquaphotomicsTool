@@ -1,4 +1,4 @@
-import type { AnalysisResult, DatasetSummary, Progress } from './types';
+import type { AnalysisResult, DatasetSummary, Progress, ExperimentImport, ExperimentResult, UnitySummary } from './types';
 import type { WorkerRequest, WorkerResponse } from './client';
 
 interface PyodideRuntime {
@@ -102,6 +102,9 @@ async function initialize(pythonUrl: string, id: number): Promise<PyodideRuntime
         throw new Error('解析プログラムの内容を確認できませんでした。ページを再読み込みしてください。');
       }
       pyodide.FS.writeFile('/home/pyodide/workbench.py', source, { encoding: 'utf8' });
+      const experimentResponse = await fetch(new URL('experiment.py', sourceUrl), {cache:'no-cache'});
+      if (!experimentResponse.ok) throw new Error(`実験データの解析処理を取得できませんでした（HTTP ${experimentResponse.status}）。`);
+      pyodide.FS.writeFile('/home/pyodide/experiment.py',await experimentResponse.text(),{encoding:'utf8'});
       const packageUrl = new URL('aquap2py.zip', sourceUrl);
       const packageResponse = await fetch(packageUrl, {cache:'no-cache'});
       if (!packageResponse.ok) throw new Error(`aquap2pyを取得できませんでした（HTTP ${packageResponse.status}）。`);
@@ -114,8 +117,10 @@ if '/home/pyodide' not in sys.path:
 if '/home/pyodide/aquap2py.zip' not in sys.path:
     sys.path.insert(0, '/home/pyodide/aquap2py.zip')
 from workbench import inspect_bytes, inspect_calibration_bytes, demo_dataset, analyze
+from experiment import merge_phase_files, inspect_unity_bytes, synchronize_experiment
 _dataset = None
 _calibration_dataset = None
+_unity_dataset = None
 `);
       return pyodide;
     })().catch(error => {
@@ -135,7 +140,7 @@ async function jsonResult<T>(pyodide: PyodideRuntime, code: string): Promise<T> 
   return JSON.parse(value) as T;
 }
 
-async function execute(request: WorkerRequest): Promise<DatasetSummary | AnalysisResult> {
+async function execute(request: WorkerRequest): Promise<DatasetSummary | AnalysisResult | ExperimentImport | ExperimentResult | UnitySummary> {
   const pyodide = await initialize(request.pythonUrl, request.id);
   if (request.kind === 'demo') {
     progress(request.id, 'demo', '人工スペクトルデータを作成しています。');
@@ -145,11 +150,68 @@ _next_dataset, _next_summary = demo_dataset()
 _response_json = _json.dumps(_next_summary, ensure_ascii=False, allow_nan=False)
 _dataset = _next_dataset
 _calibration_dataset = None
+_unity_dataset = None
 _response_json
 `);
     } finally {
       clearGlobals(pyodide, ['_next_dataset', '_next_summary', '_response_json']);
     }
+  }
+  if (request.kind === 'loadExperiment') {
+    if (request.files.filter(file=>file.phase==='Unity').length>1) throw new Error('Unityログは1ファイルを指定してください。');
+    if (!request.files.some(file=>file.phase!=='Unity') || request.files.filter(file=>file.phase!=='Unity').length>30) throw new Error('フェーズ別の測定CSVは1〜30ファイルを指定してください。');
+    progress(request.id,'experiment','フェーズ別のスペクトルとUnityログを確認しています。');
+    const names: string[] = [];
+    const specs = request.files.map((file,index) => {
+      const key = `_experiment_input_${index}`;
+      names.push(key); pyodide.globals.set(key,new Uint8Array(file.data));
+      return {name:file.filename,phase:file.phase,key};
+    });
+    pyodide.globals.set('_experiment_files_json',JSON.stringify(specs));
+    try {
+      return await jsonResult<ExperimentImport>(pyodide,`
+_experiment_files = _json.loads(_experiment_files_json)
+_phase_inputs = [dict(name=_f['name'], phase=_f['phase'], data=bytes(globals()[_f['key']].to_py())) for _f in _experiment_files if _f['phase'] != 'Unity']
+_next_dataset, _next_summary = merge_phase_files(_phase_inputs)
+_next_unity = None
+_next_unity_summary = None
+for _f in _experiment_files:
+    if _f['phase'] == 'Unity':
+        _next_unity, _next_unity_summary = inspect_unity_bytes(bytes(globals()[_f['key']].to_py()), _f['name'])
+_response_json = _json.dumps(dict(summary=_next_summary, unity=_next_unity_summary), ensure_ascii=False, allow_nan=False)
+_dataset = _next_dataset
+_unity_dataset = _next_unity
+_calibration_dataset = None
+_response_json
+`);
+    } finally {
+      clearGlobals(pyodide,[...names,'_experiment_files_json','_experiment_files','_phase_inputs','_next_dataset','_next_summary','_next_unity','_next_unity_summary','_response_json','_f']);
+    }
+  }
+  if (request.kind === 'loadUnity') {
+    progress(request.id,'unity','Unityログの時刻と生理指標の列を確認しています。');
+    pyodide.globals.set('_input_data',new Uint8Array(request.data)); pyodide.globals.set('_input_name',request.filename);
+    try {
+      return await jsonResult<UnitySummary>(pyodide,`
+_next_unity, _next_unity_summary = inspect_unity_bytes(bytes(_input_data.to_py()), _input_name)
+_response_json = _json.dumps(_next_unity_summary, ensure_ascii=False, allow_nan=False)
+_unity_dataset = _next_unity
+_response_json
+`);
+    } finally { clearGlobals(pyodide,['_input_data','_input_name','_next_unity','_next_unity_summary','_response_json']); }
+  }
+  if (request.kind === 'synchronize') {
+    await ensurePackages(pyodide,['scipy'],request.id);
+    progress(request.id,'synchronize','測定時刻ごとにUnityログを集計し、対応率とスペクトルとの関係を計算しています。');
+    pyodide.globals.set('_experiment_config_json',JSON.stringify(request.config));
+    pyodide.globals.set('_experiment_analysis_json',JSON.stringify(request.analysis));
+    try {
+      return await jsonResult<ExperimentResult>(pyodide,`
+if _dataset is None or _unity_dataset is None:
+    raise ValueError('フェーズ別スペクトルとUnityログを先に読み込んでください。')
+_json.dumps(synchronize_experiment(_dataset, _unity_dataset, _json.loads(_experiment_config_json), _json.loads(_experiment_analysis_json)), ensure_ascii=False, allow_nan=False)
+`);
+    } finally { clearGlobals(pyodide,['_experiment_config_json','_experiment_analysis_json']); }
   }
   if (request.kind === 'load' || request.kind === 'loadCalibration') {
     const extension = request.filename.toLowerCase().split('.').at(-1);
@@ -173,6 +235,7 @@ if _input_is_calibration:
 else:
     _dataset = _next_dataset
     _calibration_dataset = None
+    _unity_dataset = None
 _response_json
 `);
     } finally {
@@ -196,7 +259,7 @@ _json.dumps(analyze(_dataset, _json.loads(_config_json), calibration=_calibratio
 scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   if (!request || !Number.isSafeInteger(request.id)) return;
-  if (!['load', 'loadCalibration', 'demo', 'analyze'].includes(request.kind)) {
+  if (!['load', 'loadCalibration', 'demo', 'analyze', 'loadExperiment', 'loadUnity', 'synchronize'].includes(request.kind)) {
     scope.postMessage({ id: request.id, kind: 'error', message: '解析環境への要求が不正です。' });
     return;
   }

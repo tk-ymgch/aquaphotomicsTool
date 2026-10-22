@@ -56,6 +56,7 @@ const clientFiles = await filesIn(client);
 const routeFor = path => '/' + relative(client, path).split(sep).join('/');
 assert.ok(clientFiles.some(path => routeFor(path) === '/index.html'));
 assert.ok(clientFiles.some(path => routeFor(path) === '/python/workbench.py'));
+assert.ok(clientFiles.some(path => routeFor(path) === '/python/experiment.py'));
 assert.ok(clientFiles.some(path => routeFor(path) === '/python/aquap2py.zip'));
 assert.ok(clientFiles.some(path => routeFor(path).startsWith('/wheels/')));
 

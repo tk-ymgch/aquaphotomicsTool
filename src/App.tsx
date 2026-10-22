@@ -16,14 +16,17 @@ import aquap2ComparisonGuide from '../docs/AQUAP2_COMPARISON.md?raw';
 import { downloadBytes, comparisonCsv, snapshotBytes, getResultTables, exportCsv } from './downloads';
 import MethodPanel, { EngineSelector, PipelineSelector } from './MethodPanel';
 import {NativeAquagramSettings, NativePreprocessingSettings, NativePLSRSettings, NativePLSRResults, nativePlsrFigures} from './NativeAnalysisPanel';
+import ExperimentPanel, {experimentFigures} from './ExperimentPanel';
+import {createExperimentSettings,experimentDefaults,validateExperimentConfig} from './experimentSettings';
+import type {ExperimentConfig,ExperimentFile,ExperimentResult,UnitySummary} from './types';
 import './styles.css';
 
-type View = 'setup' | 'spectra' | 'pca' | 'aquagram' | 'pls' | 'compare' | 'tables' | 'methods';
-type Source = { kind: 'file'; file: File; sheet?: string } | { kind: 'demo' };
+type View = 'setup' | 'spectra' | 'pca' | 'aquagram' | 'pls' | 'compare' | 'tables' | 'methods' | 'experiment';
+type Source = { kind: 'file'; file: File; sheet?: string } | { kind: 'demo' } | {kind:'experiment';files:ExperimentFile[]};
 const palette = ['#161616', '#747474', '#a5a5a5', '#424242', '#c1c1c1', '#878787'];
 const dashes = ['solid', 'dash', 'dot', 'dashdot', 'longdash', 'longdashdot'];
 const symbols = ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'triangle-down'];
-const viewNames: Record<View, string> = { setup: 'データと解析設定', spectra: 'スペクトル', pca: '主成分分析', aquagram: 'Aquagram', pls: 'PLS回帰', compare: '条件間比較', tables: '数値表', methods: '解析方式' };
+const viewNames: Record<View, string> = { setup: 'データと解析設定', spectra: 'スペクトル', pca: '主成分分析', aquagram: 'Aquagram', pls: 'PLS回帰', compare: '条件間比較', tables: '数値表', methods: '解析方式', experiment:'実験・Unity比較' };
 const fmt = (value: unknown) => typeof value === 'number' ? Number.isFinite(value) ? value.toLocaleString('ja-JP', { maximumFractionDigits: 5 }) : '—' : value === null || value === undefined || value === '' ? '—' : String(value);
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 const aquap2Endpoint = 'http://127.0.0.1:8787';
@@ -139,6 +142,10 @@ export default function App() {
   const [aquap2Health, setAquap2Health] = useState<Aquap2Health | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState('');
+  const [unitySummary,setUnitySummary]=useState<UnitySummary|null>(null);
+  const [experimentConfig,setExperimentConfig]=useState<ExperimentConfig|null>(null);
+  const [experimentResult,setExperimentResult]=useState<ExperimentResult|null>(null);
+  const unitySource=useRef<File|null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const settingsInput = useRef<HTMLInputElement>(null);
   const client = useRef<AnalysisClient | null>(null);
@@ -152,6 +159,7 @@ export default function App() {
   const operation = useRef(0);
   const parsedWater = parseWaves(waterText);
   const stale = !!result && (!!config && JSON.stringify(config) !== lastRunKey || !parsedWater.valid);
+  const experimentStale=!!experimentResult&&!!experimentConfig&&Object.entries(experimentConfig).some(([key,value])=>JSON.stringify(value)!==JSON.stringify(experimentResult.provenance.config[key as keyof ExperimentConfig]));
   const disabled = !!busy || exporting || connecting;
   const usesLocalR = config?.analysisEngine === 'aquap2';
   const usesPort = config ? config.analysisEngine === 'aquap2py' : true;
@@ -186,7 +194,7 @@ export default function App() {
   function disconnectAquap2() { connectionAttempt.current += 1; aquap2Client.current?.disconnect(); aquap2Client.current = null; setAquap2Health(null); setConnecting(false); setConnectionError(''); }
   function update<K extends keyof AnalysisConfig>(key: K, value: AnalysisConfig[K]) { setConfig(old => old ? { ...old, [key]: value, ...(key === 'groupColumn' ? { aquagramReference: 'global' } : {}) } : null); setNotice(''); }
   function navigate(next: View) { setView(next); setMenu(false); window.scrollTo({ top: 0, behavior: 'auto' }); }
-  async function load(next: Source) {
+  async function load(next: Exclude<Source,{kind:'experiment'}>) {
     if (disabled) return;
     const id = ++operation.current;
     setBusy('load'); setError(''); setNotice(''); setProgress({ phase: 'load', message: next.kind === 'demo' ? '人工サンプルデータを準備しています' : 'データを読み込んでいます' });
@@ -197,10 +205,57 @@ export default function App() {
       datasetReady.current = true;
       calibrationReady.current = false; calibrationSource.current=null; calibrationFiles.current.clear(); setCalibrationSummary(null);
       const initial = defaults(data);
+      setUnitySummary(null);setExperimentConfig(null);setExperimentResult(null);unitySource.current=null;
       setSummary(data); setConfig(initial); setWaterText(initial.aquagramWavelengths.join(', ')); setDemo(data.artificial); setResult(null); setLastRunKey(''); setSelected(null); setAxisX(0); setAxisY(1); setRuns([]); setRunName('条件 1'); navigate('setup');
       if (!data.wavelengthColumns.length) setError(data.dataKind === 'unity-log' ? 'このファイルはUnityの位置・視線・瞳孔などの時系列ログです。波長スペクトルを含まないため、PCA・Aquagramの入力には使えません。波長列を含む測定CSVを選択してください。' : '波長列を検出できませんでした。スペクトルの列名が 1300、1300nm など波長を示す形式のデータを選択してください。');
     } catch (cause) { if (id === operation.current) { client.current?.dispose(); client.current = null; datasetReady.current = false; calibrationReady.current = false; setError(cause instanceof Error ? cause.message : String(cause)); } }
     finally { if (id === operation.current) { setBusy(null); setProgress(null); } }
+  }
+  async function restoreDataset(){
+    if(datasetReady.current||!source.current)return;
+    const src=source.current;
+    if(src.kind==='demo')await getClient().demo();
+    else if(src.kind==='experiment'){
+      await getClient().loadExperiment(src.files);
+      if(unitySource.current)await getClient().loadUnity(unitySource.current);
+    }else await getClient().load(src.file,src.sheet);
+    datasetReady.current=true;calibrationReady.current=false;
+  }
+  async function loadExperiment(files:ExperimentFile[]){
+    if(disabled)return;
+    const id=++operation.current;setBusy('load');setError('');setNotice('');setProgress({phase:'experiment',message:'実験CSVを読み込んでいます'});
+    try{
+      const loaded=await getClient().loadExperiment(files);
+      if(id!==operation.current)return;
+      source.current={kind:'experiment',files:[...files]};unitySource.current=files.find(f=>f.phase==='Unity')?.file??null;
+      datasetReady.current=true;calibrationReady.current=false;calibrationSource.current=null;calibrationFiles.current.clear();setCalibrationSummary(null);
+      const initial=defaults(loaded.summary);setSummary(loaded.summary);setConfig(initial);setWaterText(initial.aquagramWavelengths.join(', '));setDemo(false);
+      setUnitySummary(loaded.unity);setExperimentConfig(experimentDefaults(loaded.summary,loaded.unity));setExperimentResult(null);
+      setResult(null);setLastRunKey('');setSelected(null);setRuns([]);setRunName('条件 1');setAxisX(0);setAxisY(1);
+      setNotice('フェーズ別CSVを結合しました。測定時刻とUnityの0秒の対応を確認してください。');navigate('experiment');
+    }catch(cause){if(id===operation.current){client.current?.dispose();client.current=null;datasetReady.current=false;calibrationReady.current=false;setError(cause instanceof Error?cause.message:String(cause));}}
+    finally{if(id===operation.current){setBusy(null);setProgress(null);}}
+  }
+  async function loadUnity(file:File){
+    if(disabled||!summary?.experiment)return;
+    const id=++operation.current;setBusy('load');setError('');setNotice('');
+    try{
+      await restoreDataset();const loaded=await getClient().loadUnity(file);if(id!==operation.current)return;
+      unitySource.current=file;setUnitySummary(loaded);setExperimentResult(null);
+      setExperimentConfig(old=>({...experimentDefaults(summary,loaded),...old,unityTimeColumn:loaded.suggestedTimeColumn??loaded.timeColumns[0]?.column??'Time',unityTimeUnit:loaded.suggestedTimeUnit,unityStartTime:null,timeOffsetSeconds:0,anchorConfirmation:undefined}));
+      setNotice('Unityログを読み込みました。時刻列と開始日時を確認してください。');
+    }catch(cause){if(id===operation.current){client.current?.dispose();client.current=null;datasetReady.current=false;calibrationReady.current=false;setError(cause instanceof Error?cause.message:String(cause));}}
+    finally{if(id===operation.current){setBusy(null);setProgress(null);}}
+  }
+  async function synchronize(){
+    if(disabled||!experimentConfig||!summary?.experiment||!unitySummary)return;
+    const id=++operation.current;setBusy('analyze');setError('');setNotice('');
+    try{
+      const applied=validateExperimentConfig(experimentConfig);await restoreDataset();
+      const synced=await getClient().synchronize(applied,result);if(id!==operation.current)return;
+      setExperimentResult(synced);setNotice('時刻対応と生理指標の集計が完了しました。フェーズごとの対応率を確認してください。');
+    }catch(cause){if(id===operation.current){client.current?.dispose();client.current=null;datasetReady.current=false;calibrationReady.current=false;setError(cause instanceof Error?cause.message:String(cause));}}
+    finally{if(id===operation.current){setBusy(null);setProgress(null);}}
   }
   async function loadCalibration(file:File,sheet?:string) {
     if(disabled) return;
@@ -229,7 +284,7 @@ export default function App() {
     const id = ++operation.current;
     setBusy('analyze'); setError(''); setNotice(''); setProgress({ phase: 'analyze', message: '解析を開始しています' });
     try {
-      if (!datasetReady.current && source.current) { const src = source.current; if (src.kind === 'demo') await getClient().demo(); else await getClient().load(src.file, src.sheet); datasetReady.current = true; calibrationReady.current=false; }
+      await restoreDataset();
       if(applied.analysisEngine === 'aquap2py' && applied.nativeAquagram?.enabled && !calibrationReady.current){const cal=calibrationSource.current;if(!cal)throw new Error('温度校正ファイルを読み込んでください。');await getClient().loadCalibration(cal.file,cal.sheet);calibrationReady.current=true;}
       let analysis = await getClient().analyze(applied);
       if (id !== operation.current) return;
@@ -239,7 +294,7 @@ export default function App() {
         analysis = await aquap2Client.current.analyze(analysis);
       }
       if (id !== operation.current) return;
-      setResult(analysis); setLastRunKey(JSON.stringify(applied)); setResultName(summary.name); setSelected(null); setAxisX(0); setAxisY(Math.min(1, analysis.pca.explainedVariance.length - 1)); navigate('spectra');
+      setResult(analysis);setExperimentResult(null); setLastRunKey(JSON.stringify(applied)); setResultName(summary.name); setSelected(null); setAxisX(0); setAxisY(Math.min(1, analysis.pca.explainedVariance.length - 1)); navigate('spectra');
     } catch (cause) { if (id === operation.current) { client.current?.dispose(); client.current = null; datasetReady.current = false; calibrationReady.current = false; if (applied.analysisEngine === 'aquap2') { disconnectAquap2(); setConnectionError('解析中にエラーが発生しました。サービスの状態を確認し、再接続してください。'); } setError(cause instanceof Error ? cause.message : String(cause)); } }
     finally { if (id === operation.current) { setBusy(null); setProgress(null); } }
   }
@@ -318,6 +373,43 @@ export default function App() {
     }catch(cause){setError(`比較結果を保存できませんでした。${cause instanceof Error?cause.message:String(cause)}`);}
     finally{setExporting(false);setExportStatus('');}
   }
+  async function addExperimentFiles(files:Record<string,Uint8Array>,saved:ExperimentResult,savedFigures:Record<string,Figure>){
+    for(const [name,contents] of Object.entries(saved.exports)){
+      const safe=name.replace(/\\/g,'/').split('/').filter(part=>part&&part!=='.'&&part!=='..').join('/');
+      files[safe.startsWith('experiment/')?safe:`experiment/${safe}`]=strToU8(safe.endsWith('.csv')?'\uFEFF'+contents.replace(/^\uFEFF/,''):contents);
+    }
+    files['experiment/experiment-settings.json']=strToU8(JSON.stringify(createExperimentSettings(saved.provenance.config),null,2));
+    files['experiment/results.json']=strToU8(JSON.stringify({...saved,exports:undefined},null,2));
+    const src=source.current;
+    if(src?.kind==='experiment'){
+      for(let i=0;i<src.files.length;i++){
+        const entry=src.files[i];if(entry.phase==='Unity')continue;
+        files[`source/${entry.phase}/${i+1}_${entry.file.name.replace(/[\\/:*?"<>|]/g,'_')}`]=new Uint8Array(await entry.file.arrayBuffer());
+      }
+    }
+    if(unitySource.current)files[`source/Unity/${unitySource.current.name.replace(/[\\/:*?"<>|]/g,'_')}`]=new Uint8Array(await unitySource.current.arrayBuffer());
+    for(const [name,figure] of Object.entries(savedFigures)){
+      setExportStatus('実験比較のグラフを保存しています');
+      const url=await figurePng(figure);files[`experiment/figures/${name}.png`]=Uint8Array.from(atob(url.split(',')[1]),char=>char.charCodeAt(0));
+    }
+  }
+  async function saveExperiment(savedFigures:Record<string,Figure>){
+    if(!experimentResult||disabled)return;
+    setExporting(true);setError('');setExportStatus('実験比較をまとめています');
+    try{
+      const files:Record<string,Uint8Array>={};await addExperimentFiles(files,experimentResult,savedFigures);
+      if(result){
+        for(const [name,contents] of Object.entries(result.exports)){const safe=name.replace(/\\/g,'/').split('/').filter(part=>part&&part!=='.'&&part!=='..').join('/');files[`spectral-analysis/${safe}`]=strToU8(safe.endsWith('.csv')?'\uFEFF'+contents.replace(/^\uFEFF/,''):contents);}
+        files['spectral-analysis/analysis-settings.json']=strToU8(JSON.stringify(createSettingsDocument(requestedSettings(result),{name:summary?.name??resultName,sheet:summary?.sheet}),null,2));
+        files['spectral-analysis/metadata.json']=strToU8(JSON.stringify(result.metadata,null,2));
+        const calIdentity=result.metadata.settings.nativeAquagram?.calibrationSource;if(result.metadata.settings.nativeAquagram?.enabled&&calIdentity){const file=calibrationFiles.current.get(calIdentity.sha256);if(!file)throw new Error('元の校正ファイルを再読込してください。');files['spectral-analysis/calibration/source/'+file.name.replace(/[\\/:*?"<>|]/g,'_')]=new Uint8Array(await file.arrayBuffer());}
+      }
+      files['README.txt']=strToU8('Aquaphotomics Workbench 実験・Unity比較\n実験CSV・Unityログの元データ、同期済み指標、対応率、瞬き候補、相関、適用した同期設定と来歴、表示したグラフを保存しています。\n時刻の対応は入力設定に基づき、自動的に正しい同期であることを保証しません。対応するログがない試料は欠測です。相関は探索的な比較です。\nスペクトル解析済みの場合、比較に使用した解析結果と適用設定をspectral-analysis/に含みます。\n');
+      downloadBytes(zipSync(files,{level:6}),`aquaphotomics-experiment-${new Date().toISOString().slice(0,10)}.zip`,'application/zip');
+      setNotice('実験比較の結果・適用した同期設定・元データ・グラフをZIPに保存しました。');
+    }catch(cause){setError(`実験比較を保存できませんでした。${cause instanceof Error?cause.message:String(cause)}`);}
+    finally{setExporting(false);setExportStatus('');}
+  }
   async function saveZip() {
     if (!result || !figures || disabled) return;
     setExporting(true); setError(''); setExportStatus('解析データをまとめています');
@@ -335,6 +427,8 @@ export default function App() {
       files['docs/AQUAP2_COMPARISON.md']=strToU8(aquap2ComparisonGuide);
       files['metadata.json'] = strToU8(JSON.stringify({ source: resultName, artificial: demo, ...saved.metadata }, null, 2));
       if (src?.kind === 'file') files[`source/${src.file.name.replace(/[\\/:*?"<>|]/g, '_')}`] = new Uint8Array(await src.file.arrayBuffer());
+      if(src?.kind==='experiment'&&!experimentResult){for(let i=0;i<src.files.length;i++){const entry=src.files[i];if(entry.phase==='Unity')continue;files[`source/${entry.phase}/${i+1}_${entry.file.name.replace(/[\\/:*?"<>|]/g,'_')}`]=new Uint8Array(await entry.file.arrayBuffer());}if(unitySource.current)files[`source/Unity/${unitySource.current.name.replace(/[\\/:*?"<>|]/g,'_')}`]=new Uint8Array(await unitySource.current.arrayBuffer());}
+      if(experimentResult)await addExperimentFiles(files,experimentResult,experimentFigures(experimentResult,saved));
       const calIdentity=saved.metadata.settings.nativeAquagram?.calibrationSource; if(saved.metadata.settings.nativeAquagram?.enabled && calIdentity){const file=calibrationFiles.current.get(calIdentity.sha256);if(!file)throw new Error('元の校正ファイルを再読込してください。');files['calibration/source/'+file.name.replace(/[\\/:*?"<>|]/g,'_')]=new Uint8Array(await file.arrayBuffer());}
       const entries = Object.entries(savedFigures);
       for (let i = 0; i < entries.length; i++) {
@@ -366,9 +460,9 @@ export default function App() {
       <a className="brand" href="#" onClick={e => { e.preventDefault(); navigate('setup'); }}><span className="brand-mark"><Waves size={25} strokeWidth={1.3} /></span><span>aquaphotomics<small>ANALYSIS WORKBENCH</small></span></a>
       <div className="sidebar-divider" />
       <div className="nav-caption">WORKSPACE <span>01</span></div>
-      <nav aria-label="解析メニュー">{([{ id: 'setup', icon: SlidersHorizontal, name: 'データと解析設定', index: '01' }, { id: 'spectra', icon: Activity, name: 'スペクトル', index: '02' }, { id: 'pca', icon: ScatterChart, name: '主成分分析', index: '03' }, { id: 'aquagram', icon: Radar, name: 'Aquagram', index: '04' }, { id: 'pls', icon: ScatterChart, name: 'PLS回帰', index: '05' }, { id: 'compare', icon: Settings2, name: '条件間比較', index: '06' }, { id: 'tables', icon: Database, name: '数値表', index: '07' }, { id: 'methods', icon: CircleHelp, name: '解析方式', index: '08' }] as const).map(item => <button key={item.id} className={`nav-item ${view === item.id ? 'active' : ''}`} onClick={() => navigate(item.id)} aria-current={view === item.id ? 'page' : undefined}><item.icon size={18} strokeWidth={1.5} /><span>{item.name}</span><small>{item.index}</small></button>)}</nav>
+      <nav aria-label="解析メニュー">{([{ id: 'setup', icon: SlidersHorizontal, name: 'データと解析設定', index: '01' }, { id: 'spectra', icon: Activity, name: 'スペクトル', index: '02' }, { id: 'pca', icon: ScatterChart, name: '主成分分析', index: '03' }, { id: 'aquagram', icon: Radar, name: 'Aquagram', index: '04' }, { id: 'pls', icon: ScatterChart, name: 'PLS回帰', index: '05' }, { id: 'experiment', icon: Activity, name: '実験・Unity比較', index: '06' }, { id: 'compare', icon: Settings2, name: '条件間比較', index: '07' }, { id: 'tables', icon: Database, name: '数値表', index: '08' }, { id: 'methods', icon: CircleHelp, name: '解析方式', index: '09' }] as const).map(item => <button key={item.id} className={`nav-item ${view === item.id ? 'active' : ''}`} onClick={() => navigate(item.id)} aria-current={view === item.id ? 'page' : undefined}><item.icon size={18} strokeWidth={1.5} /><span>{item.name}</span><small>{item.index}</small></button>)}</nav>
       <div className="sidebar-data"><div className="nav-caption">DATA SOURCE <Database size={12} /></div>{summary ? <><div className="source-icon"><FileSpreadsheet size={18} /><span title={summary.name}>{summary.name}</span></div><p>{summary.rowCount.toLocaleString()} samples <i /> {summary.wavelengthColumns.length.toLocaleString()} wavelengths</p>{demo && <span className="demo-label dark"><FlaskConical size={11} /> 人工サンプル</span>}<button className="sidebar-link" disabled={disabled} onClick={() => fileInput.current?.click()}>データを変更 <Plus size={13} /></button></> : <><p className="no-source">データが読み込まれていません</p><button className="sidebar-link" disabled={disabled} onClick={() => fileInput.current?.click()}>ファイルを読み込む <Plus size={13} /></button></>}</div>
-      <div className="sidebar-bottom"><div className="local-status"><span /> {usesLocalR ? 'AQUAP2 · LOCAL R' : usesPort ? 'AQUAP2PY · BROWSER' : 'PYTHON · BROWSER'}</div><p>{usesLocalR ? <>前処理後のデータを、このPCの<br />Rサービスへ送って解析します。</> : <>測定データはブラウザー内で処理します。<br />Python解析では外部へ送信しません。</>}</p><button onClick={() => setHelp(true)}><CircleHelp size={14} /> このワークベンチについて <ArrowUpRight size={12} /></button><div className="sidebar-version">AQUAPHOTOMICS TOOL <span>v1.7.0</span></div></div>
+      <div className="sidebar-bottom"><div className="local-status"><span /> {usesLocalR ? 'AQUAP2 · LOCAL R' : usesPort ? 'AQUAP2PY · BROWSER' : 'PYTHON · BROWSER'}</div><p>{usesLocalR ? <>前処理後のデータを、このPCの<br />Rサービスへ送って解析します。</> : <>測定データはブラウザー内で処理します。<br />Python解析では外部へ送信しません。</>}</p><button onClick={() => setHelp(true)}><CircleHelp size={14} /> このワークベンチについて <ArrowUpRight size={12} /></button><div className="sidebar-version">AQUAPHOTOMICS TOOL <span>v1.8.0</span></div></div>
     </aside>
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumb"><button className="mobile-menu icon-button" aria-label="メニューを開く" onClick={() => setMenu(true)}><Menu size={20} /></button><span>WORKSPACE</span><ChevronRight size={12} /><strong>{viewNames[view]}</strong></div><div className="topbar-actions"><span className="local-pill"><span /> {usesLocalR ? 'LOCAL R · AQUAP2' : usesPort ? 'BROWSER · AQUAP2PY' : 'BROWSER · PYTHON'}</span><button className="icon-button help-button" aria-label="使い方と解析方法" onClick={() => setHelp(true)}><CircleHelp size={17} /></button><span className="topbar-separator" /><button className="export-button" onClick={() => void saveZip()} disabled={!result || disabled}><ArrowDownToLine size={15} /><span>{exporting ? '保存中' : '解析を保存'}</span></button><form method="post" action="/auth/logout" className="logout-form"><button type="submit" className="logout-button"><LogOut size={14} /><span>ログアウト</span></button></form></div></header>
@@ -376,7 +470,7 @@ export default function App() {
         {(busy || exporting) && <div className="processing-banner" role="status" aria-live="polite"><span className="spinner" /><span>{exporting ? exportStatus : progress?.message ?? '処理しています'}</span>{busy && <button onClick={cancel}><X size={13} /> 中止</button>}</div>}
         {error && <div className="notice error" role="alert"><span>{error}</span><button aria-label="エラーを閉じる" onClick={() => setError('')}><X size={15} /></button></div>}
         {notice && <div className="notice success" role="status"><Check size={15} /><span>{notice}</span><button aria-label="通知を閉じる" onClick={() => setNotice('')}><X size={15} /></button></div>}
-        {view === 'methods' ? <MethodPanel selectedMode={config?.pipelineMode ?? 'modern'} selectedEngine={config ? config.analysisEngine ?? 'python' : 'aquap2py'} health={aquap2Health} execution={result?.metadata.execution} compatibilityReport={result?.metadata.compatibilityReport} onConfigure={() => navigate('setup')} legacyVerified /> : view === 'compare' ? <>
+        {view === 'experiment' ? <ExperimentPanel summary={summary} unity={unitySummary} config={experimentConfig} result={experimentResult} analysis={result} disabled={disabled} stale={experimentStale} analysisStale={stale} onConfig={setExperimentConfig} onLoad={loadExperiment} onUnity={loadUnity} onSync={synchronize} onSave={saveExperiment} onConfigure={()=>navigate('setup')} onError={setError} onNotice={setNotice}/> : view === 'methods' ? <MethodPanel selectedMode={config?.pipelineMode ?? 'modern'} selectedEngine={config ? config.analysisEngine ?? 'python' : 'aquap2py'} health={aquap2Health} execution={result?.metadata.execution} compatibilityReport={result?.metadata.compatibilityReport} onConfigure={() => navigate('setup')} legacyVerified /> : view === 'compare' ? <>
           <div className="page-heading"><div><div className="eyebrow">ANALYSIS COMPARISON</div><h1>解析条件の比較</h1><p>同じデータで実行した条件を最大4件保持し、結果を比較します。データの再読込・ページ更新で保持内容は消えます。</p></div><button className="button outline" disabled={disabled} onClick={()=>navigate('setup')}><SlidersHorizontal size={14}/>解析設定</button></div>
           <section className="glass-panel comparison-actions"><label className="field"><span>比較に追加する条件名</span><input value={runName} maxLength={80} onChange={e=>setRunName(e.target.value)} disabled={disabled}/></label><button className="button primary" disabled={disabled || !result || stale || runs.length>=4} onClick={retainRun}><Plus size={15}/>直前の解析を追加</button><button className="button outline" disabled={disabled || !runs.length} onClick={()=>void saveComparison()}><ArrowDownToLine size={15}/>比較結果を保存</button>{!result && <p>先にデータを読み込み、解析を実行してください。</p>}{stale && <p>未適用の設定があります。再解析後に比較へ追加できます。</p>}</section>
           <ComparisonPanel runs={runs} onRemove={id=>setRuns(old=>old.filter(run=>run.id!==id))} onClear={()=>setRuns([])} onRestore={restoreRun} disabled={disabled}/>
@@ -404,7 +498,7 @@ export default function App() {
             <section className="glass-panel settings-panel"><SectionTitle index="03" title="PCA・Aquagram" caption="前処理後のデータを、2つの視点で探索します。" /><div className="pca-config"><div className="form-grid"><Field label="PCAの主成分数"><input type="number" min={1} max={Math.min(usesLocalR || usesPort ? 10 : 20, summary.rowCount - 1, config.wavelengthColumns.length)} value={config.components} onChange={e => update('components', Number(e.target.value))} /></Field><div className="pca-scale"><label><input type="checkbox" checked={config.pcaScale} onChange={e => update('pcaScale', e.target.checked)} /><span>波長ごとに標準化<small>平均中心化は常に適用</small></span></label></div></div></div><div className="setting-divider" />{usesPort && config.nativeAquagram?.enabled && <p className="field-note">温度校正を使用中です。以下の波長はsfcで使います。AUC系は専用設定の帯域座標を使い、基準群も専用設定を適用します。</p>}<Field label="Aquagramの波長 / nm" hint="数値をカンマ区切りで指定。3点以上。"><textarea rows={2} value={waterText} onChange={e => { setWaterText(e.target.value); update('aquagramWavelengths', parseWaves(e.target.value).waves); }} aria-invalid={!parsedWater.valid} /></Field><div className="form-grid aquagram-config"><Field label="Aquagramの基準"><select value={aquagramIsMean(config) ? 'none' : config.aquagramReference === 'global' ? 'global' : 'group'} onChange={e => update('aquagramReference', e.target.value === 'group' ? `group:${groups[0] ?? ''}` : e.target.value)}><option value="global">全体平均との差を標準化</option><option value="group">対照群平均との差を標準化</option><option value="none">基準なし（群平均値）</option></select></Field><Field label="波長の許容誤差 / nm"><input type="number" min={0} step="0.1" value={config.aquagramTolerance} onChange={e => update('aquagramTolerance', Number(e.target.value))} /></Field>{!aquagramIsMean(config) && config.aquagramReference !== 'global' && <Field label="対照群の名前" hint="グラフの群分けで指定した列の値を入力" wide><input list="reference-groups" placeholder="対照群名を入力" value={config.aquagramReference.replace(/^group:/, '')} onChange={e => update('aquagramReference', `group:${e.target.value}`)} /><datalist id="reference-groups">{groups.map(group => <option key={group} value={group} />)}</datalist></Field>}</div><p className="field-note">{aquagramIsMean(config) ? '基準差と標準偏差による標準化を行わず、前処理後の群平均値を表示します。' : usesLocalR || usesPort ? 'classicは標本標準偏差で標準化します。対照群を選ぶとclassic-diffを使用します。' : '群平均との差を全試料の母標準偏差で割った値を表示します。'} 波長から分子種を自動判定しません。</p></section></div>{usesPort&&<NativePreprocessingSettings value={config.nativePreprocessing??{detrend:false}} onChange={value=>update('nativePreprocessing',value)} disabled={disabled}/ >}{usesPort&&<NativeAquagramSettings value={config.nativeAquagram??nativeAquagramDefaults()} onChange={value=>update('nativeAquagram',value)} disabled={disabled} calibration={calibrationSummary} onCalibrationFile={file=>void loadCalibration(file)} onCalibrationSheet={sheet=>{if(calibrationSource.current)void loadCalibration(calibrationSource.current.file,sheet);}} groups={groups}/ >}{(!usesPort||config.pls?.enabled)&&<PLSSettings summary={summary} config={config} onChange={value=>update('pls',value)} disabled={disabled}/ >}{usesPort&&<NativePLSRSettings value={config.nativePlsr??nativePlsrDefaults(summary)} onChange={value=>update('nativePlsr',value)} disabled={disabled} summary={summary}/ >}</fieldset>
             <>{(restrictions.length > 0 || usesLocalR && !aquap2Health) && <div className="engine-run-blockers" role="status"><strong>{usesPort ? 'aquap2py' : 'aquap2本体'}で実行する前に確認してください</strong><ul>{usesLocalR && !aquap2Health && <li>同じPCのRサービスとの接続を確認してください。</li>}{restrictions.map(reason => <li key={reason}>{reason}</li>)}</ul></div>}<div className="run-panel"><div><span className="ready-dot" /><strong>{engineReady ? '解析の準備ができました' : usesLocalR ? '接続・解析設定の確認が必要です' : '解析設定の確認が必要です'}</strong><p>{config.range[0]}–{config.range[1]} nm <span>·</span> {processing}</p>{usesPort && <p>aquap2py 0.3.0 · ブラウザー内で計算／R不要 · aquap2の部分移植</p>}{usesLocalR && <p>前処理 Python／PCA・Aquagram aquap2 <span>·</span> 実行時にこのPCのRへデータ送信</p>}</div><button className="button primary run-button" disabled={disabled || !engineReady || config.wavelengthColumns.length < 3 || !parsedWater.valid} onClick={() => void analyze()}><Play size={14} fill="currentColor" /> {usesLocalR ? 'R本体で参照解析' : usesPort ? 'aquap2pyで解析を実行' : result ? '設定を適用して再解析' : '解析を実行'}<ArrowRight size={17} /></button></div></>
           </>}
-          {!summary && <div className="initial-notes"><div><ShieldCheck size={17} strokeWidth={1.3} /><span>解析エンジンを選択<small>aquap2pyはブラウザー内で実行・R不要。</small></span></div><div><Settings2 size={17} strokeWidth={1.3} /><span>適用設定と解析結果を保存<small>適用設定と結果をまとめて保存。</small></span></div><div><Activity size={17} strokeWidth={1.3} /><span>前処理・多変量解析に対応<small>スペクトル・PCA・Aquagramを表示。</small></span></div></div>}
+          <section className="glass-panel experiment-setup-link"><div><span className="panel-caption">EXPERIMENT / UNITY</span><h2>3フェーズの測定とUnityログを比較</h2><p>Baseline・Task・RecoveryのCSVを一括で読み込み、視線・瞬き候補・瞳孔とスペクトルを対応づけます。</p></div><button className="button outline" disabled={disabled} onClick={()=>navigate('experiment')}>実験・Unity比較へ<ArrowRight size={15}/></button></section>{!summary && <div className="initial-notes"><div><ShieldCheck size={17} strokeWidth={1.3} /><span>解析エンジンを選択<small>aquap2pyはブラウザー内で実行・R不要。</small></span></div><div><Settings2 size={17} strokeWidth={1.3} /><span>適用設定と解析結果を保存<small>適用設定と結果をまとめて保存。</small></span></div><div><Activity size={17} strokeWidth={1.3} /><span>前処理・多変量解析に対応<small>スペクトル・PCA・Aquagramを表示。</small></span></div></div>}
         </> : !result || !figures ? <section className="empty-results glass-panel"><div className="empty-visual"><Waves size={42} strokeWidth={1.1} /></div><span className="eyebrow">ANALYSIS NOT RUN</span><h1>{viewNames[view]}の解析結果</h1><p>{summary ? 'データと解析条件を確認して、解析を実行してください。' : '測定データを読み込むか、人工サンプルで操作を試してください。'}</p><button className="button primary" disabled={disabled} onClick={() => navigate('setup')}>{summary ? '解析設定へ' : 'データを読み込む'}<ArrowRight size={16} /></button></section> : <>
           <div className="page-heading result-heading"><div><div className="eyebrow">{view === 'spectra' ? 'SPECTRAL ANALYSIS' : view === 'pca' ? 'PRINCIPAL COMPONENT ANALYSIS' : view === 'pls' ? 'PARTIAL LEAST SQUARES REGRESSION' : 'WATER SPECTRAL PATTERN'}</div><h1>{view === 'pca' ? '主成分分析（PCA）' : view === 'aquagram' ? 'Aquagram' : view === 'pls' ? 'PLS回帰と交差検証' : 'スペクトルの表示'}</h1><p>{view === 'spectra' ? '元データと前処理後のスペクトルを比較できます。' : view === 'pca' ? '主成分スコア、ローディング、寄与率を確認できます。' : view === 'pls' ? result.nativePlsr ? 'aquap2方式の成分選択・交差検証です。成分選択から独立した外側CVによる性能評価ではありません。' : '数値の目的変数を予測し、外側CVの予測性能を確認します。' : isTemperatureAquagram(result) ? aquagramValueLabel(result) : aquagramIsMean(result.metadata.settings) ? '前処理後の群平均値を比較します。' : '指定波長における標準化した群平均差を比較します。'}</p></div><button className="button outline" onClick={() => navigate('setup')}><SlidersHorizontal size={14} /> 解析設定</button></div>
           <div className="result-context"><div><span className="source-indicator" /><span title={resultName}>{resultName}</span>{demo && <span className="demo-label"><FlaskConical size={11} /> 人工サンプル</span>}<button className="result-method-pill" onClick={() => navigate('methods')}>{resultEngineName(result)} · {modeName(result.metadata.settings)}<ArrowUpRight size={10} /></button></div><span>{result.metadata.samples} 試料 <i /> {result.metadata.variables} 波長 <i /> {result.metadata.range[0]}–{result.metadata.range[1]} nm</span></div>
@@ -420,7 +514,7 @@ export default function App() {
           {view === 'aquagram' && <div className="aquagram-method glass-panel"><div><div className="panel-caption">CALCULATION METHOD</div><h3>{isTemperatureAquagram(result) ? aquagramValueLabel(result) : aquagramIsMean(result.metadata.settings) ? '群平均値の表示' : '標準化差の計算方法'}</h3></div><p>{result.aquagram.definition}<br />{isTemperatureAquagram(result) ? '単位と校正条件は保存された来歴を確認してください。' : aquagramIsMean(result.metadata.settings) ? '表示値は前処理後の群平均で、基準差・標準偏差による標準化を含みません。' : '0は選択した基準と同じ平均値を表します。'} この図だけから水の分子種や試料の優劣を断定しません。</p></div>}
           </>}
         </>}
-        <footer className="workspace-footer"><span>AQUAPHOTOMICS WORKBENCH · v1.7.0</span><span>PREPROCESSING / PCA / PLS / AQUAGRAM</span></footer>
+        <footer className="workspace-footer"><span>AQUAPHOTOMICS WORKBENCH · v1.8.0</span><span>PREPROCESSING / PCA / PLS / AQUAGRAM</span></footer>
       </main>
     </div>
     {help && <div className="modal-backdrop" onClick={() => setHelp(false)}><section className="help-modal glass-panel" role="dialog" aria-modal="true" aria-labelledby="help-title" onClick={e => e.stopPropagation()}><button className="modal-close icon-button" aria-label="説明を閉じる" onClick={() => setHelp(false)}><X size={19} /></button><Waves size={30} strokeWidth={1.2} /><div className="eyebrow">AQUAPHOTOMICS WORKBENCH</div><h2 id="help-title">データの準備と、解析の読み方</h2><ol><li><strong>表を読み込む</strong><p>1行が1試料、波長名の列が測定値です。CSVはUTF-8、Excelはシートを選択できます。列名は1300、1300nmなど、波長を示す形式にしてください。</p></li><li><strong>解析方式を確認する</strong><p>aquap2pyはaquap2の部分移植をブラウザー内で実行し、Rを必要としません。Workbench標準Pythonと、任意のR本体参照実行も選べます。「解析方式」画面で機能ごとの実装・数値検証・未対応を確認してください。</p></li><li><strong>前処理と解析条件を設定</strong><p>ID・グループを指定し、欠損処理、散乱補正、SG処理を確認します。PCAは平均中心化を行い、波長ごとの標準化は選択できます。</p></li><li><strong>解析結果を確認する</strong><p>グラフをドラッグして拡大、ダブルクリックでリセット。線やスコア点をクリックすると同じ試料を連動表示します。Aquagramは全体・対照群との差を標準化する方式と、群平均値をそのまま示す方式（Workbench標準Pythonのみ）を選択できます。</p></li><li><strong>PLS回帰と条件間比較</strong><p>PLS回帰にはWorkbench標準Pythonを選び、PLSを有効にして数値の目的変数列を指定します。aquap2pyにはaquap2方式PLSRの専用設定があります。R参照実行ではPLSを実行しません。反復測定がある場合はCV群に個体・試料の列を指定してください。予測性能は外側OOFの指標で確認します。条件間比較に解析結果を追加し、設定を変えて再解析すると比較できます。</p></li><li><strong>解析を保存する</strong><p>元ファイル、前処理後CSV、PCA、Aquagram、適用設定、PNGをZIPに保存します。PLSを有効にした場合はOOF予測・成分選択曲線・係数も保存します。「数値表」から結果表の閲覧とCSVの個別保存ができます。設定JSONだけの保存・再読込にも対応します。条件間比較には解析後の結果を追加してください。設定変更後も、再解析するまでは直前の結果が表示・保存されます。</p></li></ol><div className="help-privacy"><ShieldCheck size={17} /><p>aquap2pyとWorkbench標準Pythonは測定データをブラウザー内で処理します。任意の「aquap2本体：R参照実行」を選んだ場合だけ、前処理後の測定行列・波長・試料ID・群名を、このPCのRサービス（127.0.0.1:8787）へ送ります。初回はPython実行環境と解析ライブラリの取得にインターネット接続が必要です。大きなデータの処理速度・メモリ使用量は端末に依存します。</p></div><button className="button primary" onClick={() => setHelp(false)}>ワークスペースに戻る <ArrowRight size={15} /></button></section></div>}

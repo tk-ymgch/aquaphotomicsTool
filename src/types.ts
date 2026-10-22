@@ -22,6 +22,7 @@ export interface DatasetSummary {
   wavelengthColumns: {column: string; wavelength: number}[];
   importNotes?: string[];
   dataKind?: 'spectra' | 'unity-log' | 'table';
+  experiment?: {files: {name: string; phase: ExperimentPhase; rows: number}[]; phases: ExperimentPhase[]; timeColumns: ExperimentTimeColumn[]; phaseTimeAnchors?:{phase:string;column:string;value:string|number;kind:string}[]; warnings: string[]};
 }
 export interface CalibrationSummary extends DatasetSummary {
   sourceSha256: string;
@@ -98,3 +99,48 @@ export interface ExecutionRecord {
 }
 export interface ComparisonRun {id: string; name: string; createdAt: string; result: AnalysisResult}
 export type Progress = {phase: string; message: string};
+
+export type ExperimentPhase = 'Baseline' | 'Task' | 'Recovery';
+export type ExperimentFileRole = ExperimentPhase | 'Unity';
+export interface ExperimentFile { file: File; phase: ExperimentFileRole }
+export interface ExperimentImport {
+  summary: DatasetSummary;
+  unity: UnitySummary | null;
+}
+export interface UnitySummary {
+  name: string; rowCount: number; columns: string[];
+  timeColumns: ExperimentTimeColumn[];
+  suggestedTimeColumn: string | null;
+  suggestedTimeUnit: 'seconds' | 'milliseconds' | 'datetime';
+  metricColumns: Record<string, unknown>;
+  warnings?: string[];
+  [key: string]: unknown;
+}
+export interface ExperimentConfig {
+  spectraTimeMode: 'column' | 'manual'; spectraTimeColumn: string | null;
+  spectraTimeUnit: 'seconds' | 'milliseconds' | 'datetime';
+  unityTimeColumn: string; unityTimeUnit: 'seconds' | 'milliseconds' | 'datetime';
+  unityStartTime: string | null; timeOffsetSeconds: number;
+  manualPhases: Record<ExperimentPhase, {startSeconds: number; intervalSeconds: number}>;
+  windowSeconds: number; maxGapSeconds: number; minCoverage: number; minSamples: number;
+  blinkThreshold: number; blinkMinSeconds: number; blinkMaxSeconds: number;
+  anchorConfirmation?: 'user-confirmed-task-first';
+}
+export interface ExperimentTimeColumn {column: string; kind: 'datetime' | 'seconds'; uniqueValues?: number; rows?: number}
+export interface ExperimentRow {
+  id: string; phase: string; sourceFile: string; sourceRow: number; timeSeconds: number;
+  windowStart: number; windowEnd: number; unitySamples: number; coverage: number;
+  valid: boolean; reason: string | null; metrics: Record<string, number | null>; pcaScores: number[] | null;
+}
+export interface ExperimentResult {
+  rows: ExperimentRow[];
+  phaseSummaries: {phase: string; totalSpectra: number; matchedSpectra: number; metrics: Record<string, {n: number; mean: number | null; sd: number | null}>}[];
+  correlations: {metric: string; pca: {component: number; n: number; r: number | null}[]; spectra: {wavelength: number; n: number; r: number | null}[]}[];
+  metrics: {key: string; label: string; unit: string}[];
+  timeline: {timeSeconds: number; pupilMean: number | null; opennessMean: number | null; gazeAngleDeg: number | null}[];
+  blinkEvents: {startSeconds: number; endSeconds: number; midpointSeconds: number; durationSeconds: number}[];
+  warnings: string[];
+  provenance: {config: ExperimentConfig; [key: string]: unknown};
+  exports: Record<string, string>;
+  [key: string]: unknown;
+}

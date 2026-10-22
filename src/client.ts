@@ -1,20 +1,24 @@
-import type { AnalysisConfig, AnalysisResult, CalibrationSummary, DatasetSummary, Progress } from './types';
+import type { AnalysisConfig, AnalysisResult, CalibrationSummary, DatasetSummary, Progress, ExperimentConfig, ExperimentFile, ExperimentImport, ExperimentResult, UnitySummary } from './types';
 
 export type WorkerPayload =
   | { kind: 'load'; data: ArrayBuffer; filename: string; sheet: string | null }
   | { kind: 'loadCalibration'; data: ArrayBuffer; filename: string; sheet: string | null }
   | { kind: 'demo' }
+  | { kind: 'loadExperiment'; files: {filename: string; data: ArrayBuffer; phase: ExperimentFile['phase']}[] }
+  | { kind: 'loadUnity'; filename: string; data: ArrayBuffer }
+  | { kind: 'synchronize'; config: ExperimentConfig; analysis: AnalysisResult | null }
   | { kind: 'analyze'; config: AnalysisConfig };
 
 export type WorkerRequest = WorkerPayload & { id: number; pythonUrl: string };
 export type WorkerResponse =
   | { id: number; kind: 'progress'; progress: Progress }
-  | { id: number; kind: 'success'; result: DatasetSummary | AnalysisResult }
+  | { id: number; kind: 'success'; result: ClientResult }
   | { id: number; kind: 'error'; message: string };
 
+type ClientResult = DatasetSummary | AnalysisResult | ExperimentImport | ExperimentResult | UnitySummary;
 interface PendingRequest {
   id: number;
-  resolve: (value: DatasetSummary | AnalysisResult) => void;
+  resolve: (value: ClientResult) => void;
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -85,6 +89,38 @@ export class AnalysisClient {
     return this.request<DatasetSummary>(async () => ({ kind: 'demo' }));
   }
 
+  loadExperiment(files: ExperimentFile[]): Promise<ExperimentImport> {
+    return this.request<ExperimentImport>(async () => {
+      if (!files.length || files.length > 32) throw new Error('実験データは1〜32ファイルを選択してください。');
+      if (files.filter(item => item.phase === 'Unity').length > 1) throw new Error('Unityログは1ファイルを指定してください。');
+      if (files.filter(item => item.phase !== 'Unity').length > 30) throw new Error('フェーズ別の測定CSVは合計30ファイルまでにしてください。');
+      let total = 0;
+      const prepared = [];
+      for (const {file, phase} of files) {
+        if (!/\.csv$/i.test(file.name)) throw new Error('実験の一括読込にはCSVファイルを選択してください。');
+        if (file.size === 0 || file.size > MAX_FILE_BYTES) throw new Error('各ファイルは空でない50 MB以下のCSVにしてください。');
+        total += file.size;
+        if (total > 100 * 1024 * 1024) throw new Error('一括読込は合計100 MB以下にしてください。');
+        this.report({phase:'reading',message:`実験データをブラウザー内で読み込んでいます（${prepared.length + 1} / ${files.length}）`});
+        prepared.push({filename:file.name, phase, data:await file.arrayBuffer()});
+      }
+      if (!prepared.some(item => item.phase !== 'Unity')) throw new Error('少なくとも1つの測定フェーズのCSVを指定してください。');
+      return {kind:'loadExperiment',files:prepared};
+    });
+  }
+
+  loadUnity(file: File): Promise<UnitySummary> {
+    return this.request<UnitySummary>(async () => {
+      if (!/\.csv$/i.test(file.name) || file.size === 0 || file.size > MAX_FILE_BYTES) throw new Error('Unityログは空でない50 MB以下のCSVを選択してください。');
+      return {kind:'loadUnity',filename:file.name,data:await file.arrayBuffer()};
+    });
+  }
+
+  synchronize(config: ExperimentConfig, analysis: AnalysisResult | null): Promise<ExperimentResult> {
+    const snapshot = structuredClone(config), saved = analysis ? structuredClone(analysis) : null;
+    return this.request<ExperimentResult>(async () => ({kind:'synchronize',config:snapshot,analysis:saved}));
+  }
+
   loadCalibration(file: File, sheet?: string): Promise<CalibrationSummary> {
     return this.request<CalibrationSummary>(async () => {
       if (!/\.(csv|xlsx|xls)$/i.test(file.name)) throw new Error('温度校正にはCSV、XLSX、XLSを選択してください。');
@@ -115,7 +151,7 @@ export class AnalysisClient {
     try { this.onProgress?.(progress); } catch { /* The computation remains usable. */ }
   }
 
-  private request<T extends DatasetSummary | AnalysisResult>(prepare: () => Promise<WorkerPayload>): Promise<T> {
+  private request<T extends ClientResult>(prepare: () => Promise<WorkerPayload>): Promise<T> {
     if (this.disposed) return Promise.reject(new Error('解析環境は終了しています。データを読み直してください。'));
     if (this.pending) return Promise.reject(new Error('別の処理を実行中です。完了するまでお待ちください。'));
     const id = ++this.sequence;
@@ -127,7 +163,7 @@ export class AnalysisClient {
       void prepare().then(payload => {
         if (this.disposed || this.pending?.id !== id) return;
         const request: WorkerRequest = { ...payload, id, pythonUrl: this.pythonUrl };
-        const transfer = payload.kind === 'load' || payload.kind === 'loadCalibration' ? [payload.data] : [];
+        const transfer = payload.kind === 'load' || payload.kind === 'loadCalibration' || payload.kind === 'loadUnity' ? [payload.data] : payload.kind === 'loadExperiment' ? payload.files.map(item => item.data) : [];
         try {
           this.worker.postMessage(request, transfer);
         } catch {

@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {stripTypeScriptTypes} from 'node:module';
+const source=stripTypeScriptTypes(await readFile(new URL('../src/experimentSettings.ts',import.meta.url),'utf8'));
+const {detectExperimentRole,experimentDefaults,validateExperimentConfig,createExperimentSettings,parseExperimentSettings}=await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const summary={experiment:{timeColumns:[{column:'Timestamp',kind:'datetime'}]}};
+const unity={suggestedTimeColumn:'Time',suggestedTimeUnit:'seconds',timeColumns:[]};
+const config=experimentDefaults(summary,unity);
+let checks=0;
+function check(name,test){try{test();checks++;}catch(error){console.error(name);throw error;}}
+check('file names identify phases without dropping unity',()=>{for(const role of ['Baseline','Task','Recovery','Unity'])assert.equal(detectExperimentRole(`S02_Rollercoaster_${role}Export_L_Palm.csv`),role);});
+check('datetime defaults never invent Unity anchor',()=>{assert.equal(config.spectraTimeMode,'column');assert.equal(config.spectraTimeUnit,'datetime');assert.equal(config.unityStartTime,null);assert.equal(config.timeOffsetSeconds,0);});
+check('missing timestamp requires explicit manual mode',()=>{assert.equal(experimentDefaults({experiment:{timeColumns:[]}},null).spectraTimeMode,'manual');});
+check('roundtrip includes confirmed anchor without raw measurements',()=>{const input={...config,unityStartTime:'2026-01-01 12:00:00',anchorConfirmation:'user-confirmed-task-first',raw:[1234]};const doc=createExperimentSettings(input);assert.equal(doc.format,'aquaphotomics-experiment-settings');assert.deepEqual(parseExperimentSettings(JSON.stringify(doc)),validateExperimentConfig(input));assert.equal('raw' in doc.config,false);});
+check('saved settings clone phase mappings',()=>{const input=structuredClone(config),doc=createExperimentSettings(input);input.manualPhases.Task.startSeconds=999;assert.equal(doc.config.manualPhases.Task.startSeconds,0);});
+check('reject malformed document and overlarge input',()=>{assert.throws(()=>parseExperimentSettings('{}'));assert.throws(()=>parseExperimentSettings('null'));assert.throws(()=>parseExperimentSettings('{'));assert.throws(()=>parseExperimentSettings(' '.repeat(1024*1024+1)));});
+check('reject invalid clock units and nonnumeric offset',()=>{assert.throws(()=>validateExperimentConfig({...config,unityTimeUnit:'minutes'}));assert.throws(()=>validateExperimentConfig({...config,timeOffsetSeconds:'2'}));assert.throws(()=>validateExperimentConfig({...config,timeOffsetSeconds:NaN}));});
+check('reject inconsistent blink duration',()=>{assert.throws(()=>validateExperimentConfig({...config,blinkMinSeconds:.9,blinkMaxSeconds:.1}));assert.throws(()=>validateExperimentConfig({...config,blinkThreshold:1.1}));});
+check('backend-compatible coverage and window bounds',()=>{for(const [key,value] of [['minSamples',1],['minSamples',2.1],['minCoverage',1.1],['maxGapSeconds',61],['windowSeconds',3601]])assert.throws(()=>validateExperimentConfig({...config,[key]:value}));});
+check('manual mappings require positive intervals and all phases',()=>{const modified=structuredClone(config);modified.manualPhases.Task.intervalSeconds=0;assert.throws(()=>validateExperimentConfig(modified));assert.throws(()=>validateExperimentConfig({...config,manualPhases:{Task:{startSeconds:0,intervalSeconds:1}}}));});
+check('untrusted field names do not survive validation',()=>{const doc=JSON.parse(JSON.stringify(createExperimentSettings(config)));doc.config.__proto__='ignored';doc.config.extra={spectrum:[1,2,3]};assert.deepEqual(parseExperimentSettings(JSON.stringify(doc)),config);});
+console.log(`experiment settings: ${checks} checks passed`);

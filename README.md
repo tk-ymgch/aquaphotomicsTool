@@ -1,6 +1,6 @@
-# Aquaphotomics Workbench v1.7.0
+# Aquaphotomics Workbench v1.8.0
 
-CSV・Excelのスペクトルを読み込み、前処理、PCA、交差検証付きPLS回帰、Aquagram、解析条件の比較・保存を行う研究用Webアプリです。React・Vite・TypeScript、Pyodide Web Workerを用い、VKC Visualizer 2のWeb版と技術構成を揃えています。
+CSV・Excelのスペクトルを読み込み、前処理、PCA、交差検証付きPLS回帰、Aquagram、解析条件の比較・保存を行う研究用Webアプリです。v1.8ではBaseline・Task・Recoveryの一括読込と、Unityログの時刻同期・生理指標との比較を追加しました。[実験データの使い方と集計定義](docs/EXPERIMENT_WORKFLOW.md)を参照してください。React・Vite・TypeScript、Pyodide Web Workerを用い、VKC Visualizer 2のWeb版と技術構成を揃えています。
 
 黒・白・グレーの日本語UIで、新しく読み込んだデータの既定エンジンは **aquap2py 0.3.0** です。aquap2互換のPython部分移植をブラウザー内で実行し、Rの導入・接続を必要としません。v1.7.0では温度LOESS、全範囲detrend、PLSR外れ値除外を追加しました。初回のPython実行環境・ライブラリ取得にはネット接続が必要です。既存のWorkbench標準Pythonと、任意のR本体参照実行も残しています。
 

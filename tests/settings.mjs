@@ -26,7 +26,7 @@ function check(name, test) { try { test(); passed++; } catch (error) { console.e
 check('new document roundtrip and detached snapshots', () => {
   const input = structuredClone(config), doc = createSettingsDocument(input, { name: summary.name });
   assert.equal(doc.format, 'aquaphotomics-workbench-settings');
-  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.7');
+  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.8');
   assert.equal(doc.source.sheet, null); assert.ok(Number.isFinite(Date.parse(doc.createdAt)));
   input.range[0] = 999; input.wavelengthColumns.length = 0;
   assert.deepEqual(decode(doc), config);
