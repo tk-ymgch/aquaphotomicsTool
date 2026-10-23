@@ -1,6 +1,6 @@
 # Cloudflare Pagesへの配布
 
-v1.6.1で移行した認証付きModule WorkerをPages advanced modeの`_worker.js`として引き続き配布します。v1.9.1ではUIの基調を維持し、試料別Aquagramの時間積層を横長・横方向の時間軸へ変更しました。aquap2pyは0.3.1です。設定schema1を維持し、旧設定の読込にも対応します。
+v1.6.1で移行した認証付きModule WorkerをPages advanced modeの`_worker.js`として引き続き配布します。v1.10.0ではUIの基調と認証を維持し、現行方式と論文条件を切り替えるブラウザー内の解析を追加しました。aquap2pyは0.3.1です。設定schema1を維持し、旧設定の読込にも対応します。論文条件の実装`python/paper.py`も認証後に同じサイトから配信し、測定データと利用者が選んだ参照CSVはサーバーへ送信しません。
 
 ## ビルドと検証
 

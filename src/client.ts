@@ -1,9 +1,11 @@
-import type { AnalysisConfig, AnalysisResult, CalibrationSummary, DatasetSummary, Progress, ExperimentConfig, ExperimentFile, ExperimentImport, ExperimentResult, UnitySummary } from './types';
+import type { AnalysisConfig, AnalysisResult, CalibrationSummary, DatasetSummary, Progress, ExperimentConfig, ExperimentFile, ExperimentImport, ExperimentResult, UnitySummary, PaperLoading } from './types';
 
 export type WorkerPayload =
   | { kind: 'load'; data: ArrayBuffer; filename: string; sheet: string | null }
   | { kind: 'loadCalibration'; data: ArrayBuffer; filename: string; sheet: string | null }
   | { kind: 'demo' }
+  | { kind: 'paperDemo' }
+  | { kind: 'loadPaperReference'; filename: string; data: ArrayBuffer }
   | { kind: 'loadExperiment'; files: {filename: string; data: ArrayBuffer; phase: ExperimentFile['phase']}[] }
   | { kind: 'loadUnity'; filename: string; data: ArrayBuffer }
   | { kind: 'synchronize'; config: ExperimentConfig; analysis: AnalysisResult | null }
@@ -15,7 +17,7 @@ export type WorkerResponse =
   | { id: number; kind: 'success'; result: ClientResult }
   | { id: number; kind: 'error'; message: string };
 
-type ClientResult = DatasetSummary | AnalysisResult | ExperimentImport | ExperimentResult | UnitySummary;
+type ClientResult = DatasetSummary | AnalysisResult | ExperimentImport | ExperimentResult | UnitySummary | PaperLoading;
 interface PendingRequest {
   id: number;
   resolve: (value: ClientResult) => void;
@@ -87,6 +89,20 @@ export class AnalysisClient {
 
   demo(): Promise<DatasetSummary> {
     return this.request<DatasetSummary>(async () => ({ kind: 'demo' }));
+  }
+
+  paperDemo(): Promise<DatasetSummary> {
+    return this.request<DatasetSummary>(async () => ({ kind: 'paperDemo' }));
+  }
+
+  loadPaperReference(file: File): Promise<PaperLoading> {
+    return this.request<PaperLoading>(async () => {
+      if (!/\.csv$/i.test(file.name) || file.size === 0 || file.size > MAX_FILE_BYTES) {
+        throw new Error('論文条件の共通成分参照には、空でない50 MB以下のCSVを選択してください。');
+      }
+      this.report({phase:'reading', message:'共通成分の参照データをブラウザー内で読み込んでいます。'});
+      return {kind:'loadPaperReference', filename:file.name, data:await file.arrayBuffer()};
+    });
   }
 
   loadExperiment(files: ExperimentFile[]): Promise<ExperimentImport> {
@@ -163,7 +179,7 @@ export class AnalysisClient {
       void prepare().then(payload => {
         if (this.disposed || this.pending?.id !== id) return;
         const request: WorkerRequest = { ...payload, id, pythonUrl: this.pythonUrl };
-        const transfer = payload.kind === 'load' || payload.kind === 'loadCalibration' || payload.kind === 'loadUnity' ? [payload.data] : payload.kind === 'loadExperiment' ? payload.files.map(item => item.data) : [];
+        const transfer = payload.kind === 'load' || payload.kind === 'loadCalibration' || payload.kind === 'loadUnity' || payload.kind === 'loadPaperReference' ? [payload.data] : payload.kind === 'loadExperiment' ? payload.files.map(item => item.data) : [];
         try {
           this.worker.postMessage(request, transfer);
         } catch {

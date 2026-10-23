@@ -1,4 +1,4 @@
-import type { AnalysisResult, DatasetSummary, Progress, ExperimentImport, ExperimentResult, UnitySummary } from './types';
+import type { AnalysisResult, DatasetSummary, Progress, ExperimentImport, ExperimentResult, UnitySummary, PaperLoading } from './types';
 import type { WorkerRequest, WorkerResponse } from './client';
 
 interface PyodideRuntime {
@@ -105,6 +105,13 @@ async function initialize(pythonUrl: string, id: number): Promise<PyodideRuntime
       const experimentResponse = await fetch(new URL('experiment.py', sourceUrl), {cache:'no-cache'});
       if (!experimentResponse.ok) throw new Error(`実験データの解析処理を取得できませんでした（HTTP ${experimentResponse.status}）。`);
       pyodide.FS.writeFile('/home/pyodide/experiment.py',await experimentResponse.text(),{encoding:'utf8'});
+      const paperResponse = await fetch(new URL('paper.py', sourceUrl), {cache:'no-cache'});
+      if (!paperResponse.ok) throw new Error(`論文条件の解析処理を取得できませんでした（HTTP ${paperResponse.status}）。`);
+      const paperSource = await paperResponse.text();
+      if (!paperSource.includes('def analyze_paper(') || !paperSource.includes('def inspect_paper_reference_bytes(')) {
+        throw new Error('論文条件の解析処理を確認できませんでした。ページを再読み込みしてください。');
+      }
+      pyodide.FS.writeFile('/home/pyodide/paper.py',paperSource,{encoding:'utf8'});
       const packageUrl = new URL('aquap2py.zip', sourceUrl);
       const packageResponse = await fetch(packageUrl, {cache:'no-cache'});
       if (!packageResponse.ok) throw new Error(`aquap2pyを取得できませんでした（HTTP ${packageResponse.status}）。`);
@@ -118,6 +125,7 @@ if '/home/pyodide/aquap2py.zip' not in sys.path:
     sys.path.insert(0, '/home/pyodide/aquap2py.zip')
 from workbench import inspect_bytes, inspect_calibration_bytes, demo_dataset, analyze
 from experiment import merge_phase_files, inspect_unity_bytes, synchronize_experiment
+from paper import paper_demo_dataset, inspect_paper_reference_bytes
 _dataset = None
 _calibration_dataset = None
 _unity_dataset = None
@@ -140,13 +148,14 @@ async function jsonResult<T>(pyodide: PyodideRuntime, code: string): Promise<T> 
   return JSON.parse(value) as T;
 }
 
-async function execute(request: WorkerRequest): Promise<DatasetSummary | AnalysisResult | ExperimentImport | ExperimentResult | UnitySummary> {
+async function execute(request: WorkerRequest): Promise<DatasetSummary | AnalysisResult | ExperimentImport | ExperimentResult | UnitySummary | PaperLoading> {
   const pyodide = await initialize(request.pythonUrl, request.id);
-  if (request.kind === 'demo') {
+  if (request.kind === 'demo' || request.kind === 'paperDemo') {
     progress(request.id, 'demo', '人工スペクトルデータを作成しています。');
+    pyodide.globals.set('_use_paper_demo',request.kind === 'paperDemo');
     try {
       return await jsonResult<DatasetSummary>(pyodide, `
-_next_dataset, _next_summary = demo_dataset()
+_next_dataset, _next_summary = paper_demo_dataset() if _use_paper_demo else demo_dataset()
 _response_json = _json.dumps(_next_summary, ensure_ascii=False, allow_nan=False)
 _dataset = _next_dataset
 _calibration_dataset = None
@@ -154,7 +163,19 @@ _unity_dataset = None
 _response_json
 `);
     } finally {
-      clearGlobals(pyodide, ['_next_dataset', '_next_summary', '_response_json']);
+      clearGlobals(pyodide, ['_next_dataset', '_next_summary', '_response_json', '_use_paper_demo']);
+    }
+  }
+  if (request.kind === 'loadPaperReference') {
+    progress(request.id,'paper-reference','参加者ごとのTaskを等しく重み付けして、共通成分の参照を計算しています。');
+    pyodide.globals.set('_paper_reference_data',new Uint8Array(request.data));
+    pyodide.globals.set('_paper_reference_name',request.filename);
+    try {
+      return await jsonResult<PaperLoading>(pyodide,`
+_json.dumps(inspect_paper_reference_bytes(bytes(_paper_reference_data.to_py()), _paper_reference_name), ensure_ascii=False, allow_nan=False)
+`);
+    } finally {
+      clearGlobals(pyodide,['_paper_reference_data','_paper_reference_name']);
     }
   }
   if (request.kind === 'loadExperiment') {
@@ -243,7 +264,7 @@ _response_json
     }
   }
   await ensurePackages(pyodide, ['scipy', 'scikit-learn'], request.id);
-  progress(request.id, 'analyze', request.config.nativePlsr?.enabled && request.config.analysisEngine === 'aquap2py' ? '前処理、PCA、Aquagram、aquap2方式PLSR・交差検証を計算しています。' : request.config.pls?.enabled ? '前処理、PCA、Aquagram、PLSの二重交差検証を計算しています。' : '前処理、主成分分析、Aquagramを計算しています。');
+  progress(request.id, 'analyze', request.config.analysisProfile === 'paper-v1' ? '論文条件のSNV・座標標準化・Baseline差と、参照条件を満たす共通成分・時間モデルを計算しています。' : request.config.nativePlsr?.enabled && request.config.analysisEngine === 'aquap2py' ? '前処理、PCA、Aquagram、aquap2方式PLSR・交差検証を計算しています。' : request.config.pls?.enabled ? '前処理、PCA、Aquagram、PLSの二重交差検証を計算しています。' : '前処理、主成分分析、Aquagramを計算しています。');
   pyodide.globals.set('_config_json', JSON.stringify(request.config));
   try {
     return await jsonResult<AnalysisResult>(pyodide, `
@@ -259,7 +280,7 @@ _json.dumps(analyze(_dataset, _json.loads(_config_json), calibration=_calibratio
 scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   if (!request || !Number.isSafeInteger(request.id)) return;
-  if (!['load', 'loadCalibration', 'demo', 'analyze', 'loadExperiment', 'loadUnity', 'synchronize'].includes(request.kind)) {
+  if (!['load', 'loadCalibration', 'demo', 'paperDemo', 'loadPaperReference', 'analyze', 'loadExperiment', 'loadUnity', 'synchronize'].includes(request.kind)) {
     scope.postMessage({ id: request.id, kind: 'error', message: '解析環境への要求が不正です。' });
     return;
   }

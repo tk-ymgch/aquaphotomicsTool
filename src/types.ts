@@ -56,6 +56,31 @@ export interface NativePLSRResult {
   retainedIndices?: number[]; excludedIndices?: number[]; excludedIds?: string[];
 }
 export type AnalysisEngine = 'python' | 'aquap2' | 'aquap2py';
+export interface PaperLoading {
+  values: number[];
+  source: {name: string; sha256: string};
+  participantCount: number;
+  energy?: number;
+}
+export interface PaperConfig {
+  phaseColumn: string; baselineLabel: string; taskLabel: string;
+  subjectColumn: string | null; timeColumn: string | null;
+  timeUnit: 'seconds' | 'milliseconds' | 'datetime';
+  inputKind: 'as-recorded' | 'reflectance';
+  loading?: PaperLoading;
+}
+export interface PaperResult {
+  profile: 'paper-v1';
+  coordinateLabels: string[]; targetWavelengths: number[]; actualWavelengths: number[];
+  preprocessing: {range: number[]; channels: number; actualRange: number[]; inputKind: 'as-recorded' | 'reflectance'; snvDdof: 1; columnSdDdof: 1; smoothing: false; normalizationPopulation: string; baselineRule: string};
+  timeAxis: {kind: 'seconds' | 'sample-order'; definition: string};
+  subjects: {id: string; rows: number; baselineRows: number; taskRows: number; postRows: number; baselineIndices: number[]; taskIndices: number[]; normalizerMean: number[]; normalizerSd: number[]; baselineCoordinateMean: number[]}[];
+  rows: {id: string; subject: string; phase: string; timeSeconds: number | null; isTask: boolean; coordinates: number[]; modeObserved: number | null; modePredicted: number | null}[];
+  mode: {available: boolean; source: 'external-loading' | 'loaded-subject-pooled-svd' | 'unavailable'; loading: number[] | null; participantCount: number; loadedSubjects: number; energy: number | null; referenceSource?: {name: string; sha256: string}; reason: string | null};
+  fits: {subject: string; status: 'fitted' | 'unavailable'; reason: string | null; delay: number | null; amplitude: number | null; tau: number | null; noise: number | null; rmse: number | null; r2: number | null; cost: number | null; success: boolean; points: {time: number; observed: number; predicted: number; rate: number}[]; bounds?: Record<string, unknown>}[];
+  blocks: {subject: string; phase: string; sourceFile: string | null; label: string; n: number; coordinateMean: number[]; modeMean: number | null; modeSd: number | null}[];
+  provenance: Record<string, unknown>; limitations: string[];
+}
 export interface CompatibilityReport {
   schemaVersion: number;
   implementation: {name: string; version: string; unofficial: boolean};
@@ -72,6 +97,8 @@ export interface AnalysisConfig {
   range: [number, number]; missing: 'error' | 'median' | 'mean'; scatter: Scatter;
   pipelineMode?: 'modern' | 'legacy-python';
   analysisEngine?: AnalysisEngine;
+  analysisProfile?: 'current' | 'paper-v1';
+  paper?: PaperConfig;
   smooth: boolean; window: number; polyorder: number; derivative: 0 | 1 | 2;
   pcaScale: boolean; components: number; aquagramWavelengths: number[];
   aquagramReference: string; aquagramTolerance: number;
@@ -88,6 +115,7 @@ export interface AnalysisResult {
   exports: Record<string, string>;
   pls?: PLSResult;
   nativePlsr?: NativePLSRResult;
+  paper?: PaperResult;
 }
 export interface ExecutionRecord {
   engine: AnalysisEngine; preprocessingEngine: 'python' | 'aquap2py';

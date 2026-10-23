@@ -15,4 +15,12 @@ assert.equal(tables[1].rows[0][1], '0.125');
 const comparison = parseCsv(comparisonCsv([{id:'1',name:'旧版, 比較',createdAt:'2026-10-21T00:00:00Z',result}]));
 for (const [column,value] of [['pipeline_mode','legacy-python'],['missing','mean'],['aquagram_reference','none']]) assert.equal(comparison[1][comparison[0].indexOf(column)],value);
 assert.equal(comparison[1].length, comparison[0].length);
+const paper={...result,metadata:{...result.metadata,settings:{...result.metadata.settings,analysisProfile:'paper-v1'}},
+  aquagram:{...result.aquagram,mode:'paper-delta-C',unit:'ΔC',sdDdof:1},
+  paper:{preprocessing:{inputKind:'as-recorded'},mode:{participantCount:7,referenceSource:{sha256:'a'.repeat(64)}}},
+  exports:{...result.exports,'paper/delta_coordinates.csv':'sample_id,C1\n001,-0.3\n'}};
+const paperTable=getResultTables(paper).find(table=>table.exportPath==='paper/delta_coordinates.csv');
+assert.equal(paperTable.rows[0][1],'-0.3');
+const paperCsv=parseCsv(comparisonCsv([{id:'paper',name:'artificial paper',createdAt:'2032-01-01',result:paper}]));
+for (const [column,value] of [['analysis_profile','paper-v1'],['paper_input_kind','as-recorded'],['paper_loading_participants','7'],['aquagram_sd_ddof','1'],['paper_reference_sha256','a'.repeat(64)]]) assert.equal(paperCsv[1][paperCsv[0].indexOf(column)],value);
 console.log('PASS: result table/CSV fidelity and comparison method provenance');

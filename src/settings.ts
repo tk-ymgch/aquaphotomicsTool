@@ -3,7 +3,7 @@ import type { AnalysisConfig, DatasetSummary, PLSConfig } from './types';
 export interface SettingsDocument {
   format: 'aquaphotomics-workbench-settings';
   schemaVersion: 1;
-  appVersion: '1.9';
+  appVersion: '1.10';
   createdAt: string;
   source: { name: string; sheet: string | null } | null;
   config: AnalysisConfig;
@@ -84,38 +84,40 @@ function sourceMetadata(value: unknown): SettingsDocument['source'] {
 
 function validateConfig(value: unknown, summary: DatasetSummary | null): AnalysisConfig {
   const input = record(value, '解析設定');
+  const analysisProfile=input.analysisProfile===undefined?undefined:choice(input.analysisProfile,['current','paper-v1'] as const,'解析プロトコル');
+  const paperActive=analysisProfile==='paper-v1';
   const pipelineMode = input.pipelineMode === undefined ? undefined : choice(input.pipelineMode, ['modern', 'legacy-python'], '前処理方式');
   const analysisEngine = input.analysisEngine === undefined ? undefined : choice(input.analysisEngine, ['python', 'aquap2', 'aquap2py'], '解析エンジン');
   const columns = summary ? new Set(summary.columns) : null;
   const idColumn = column(input.idColumn, '試料ID列', columns);
-  const groupColumn = column(input.groupColumn, 'グループ列', columns);
-  if (!Array.isArray(input.wavelengthColumns) || input.wavelengthColumns.length < 3 || input.wavelengthColumns.length > MAX_VARIABLES) fail('波長列は3〜10,000列指定してください。');
+  const groupColumn = column(input.groupColumn, 'グループ列', paperActive?null:columns);
+  if (!Array.isArray(input.wavelengthColumns) || input.wavelengthColumns.length < (paperActive?0:3) || input.wavelengthColumns.length > MAX_VARIABLES) fail('波長列の数を確認してください（上限10,000列）。');
   const selected = input.wavelengthColumns.map(value => {
-    const name = column(value, '波長列', columns);
+    const name = column(value, '波長列', paperActive?null:columns);
     if (name === null) fail('波長列にnullは指定できません。');
     return name;
   });
-  if (new Set(selected).size !== selected.length) fail('波長列が重複しています。');
+  if (!paperActive&&new Set(selected).size !== selected.length) fail('波長列が重複しています。');
   const detected = summary ? new Map(summary.wavelengthColumns.map(item => [item.column, item.wavelength])) : null;
   const entries = selected.map(name => {
     const parsed = wavelength(name);
-    if (parsed === null) fail(`波長列「${name}」の列名から波長を取得できません。`);
-    if (detected && detected.get(name) !== parsed) fail(`波長列「${name}」の検出波長が列名と一致しません。`);
-    return { name, value: parsed };
+    if (!paperActive&&parsed === null) fail(`波長列「${name}」の列名から波長を取得できません。`);
+    if (!paperActive&&detected && detected.get(name) !== parsed) fail(`波長列「${name}」の検出波長が列名と一致しません。`);
+    return { name, value: parsed??0 };
   }).sort((a, b) => a.value - b.value);
-  if (new Set(entries.map(entry => entry.value)).size !== entries.length) fail('同じ波長を示す列が複数あります。');
+  if (!paperActive&&new Set(entries.map(entry => entry.value)).size !== entries.length) fail('同じ波長を示す列が複数あります。');
   if (!Array.isArray(input.range) || input.range.length !== 2) fail('波長範囲は下限・上限の2値にしてください。');
-  const low = number(input.range[0], '波長範囲の下限', Number.MIN_VALUE);
-  const high = number(input.range[1], '波長範囲の上限', Number.MIN_VALUE);
-  if (low >= high) fail('波長範囲の下限は上限より小さくしてください。');
+  const low = number(input.range[0], '波長範囲の下限', paperActive?-Infinity:Number.MIN_VALUE);
+  const high = number(input.range[1], '波長範囲の上限', paperActive?-Infinity:Number.MIN_VALUE);
+  if (!paperActive&&low >= high) fail('波長範囲の下限は上限より小さくしてください。');
   const cropped = entries.filter(entry => entry.value >= low && entry.value <= high);
-  if (cropped.length < 3) fail('指定した波長範囲に3列以上の波長が必要です。');
+  if (!paperActive&&cropped.length < 3) fail('指定した波長範囲に3列以上の波長が必要です。');
   const smooth = boolean(input.smooth, 'SG平滑化');
-  const window = integer(input.window, 'SG窓幅', 3);
-  const polyorder = integer(input.polyorder, 'SG多項式次数', 0);
+  const window = integer(input.window, 'SG窓幅', paperActive?-MAX_VARIABLES:3,paperActive?MAX_VARIABLES:Number.MAX_SAFE_INTEGER);
+  const polyorder = integer(input.polyorder, 'SG多項式次数', paperActive?-MAX_VARIABLES:0,paperActive?MAX_VARIABLES:Number.MAX_SAFE_INTEGER);
   const derivative = integer(input.derivative, '微分次数', 0, 2) as 0 | 1 | 2;
   let grid = cropped.map(entry => entry.value);
-  if (smooth || derivative > 0) {
+  if (!paperActive&&(smooth || derivative > 0)) {
     if (window % 2 === 0 || window > grid.length) fail('SG窓幅は選択範囲の波長数以下の奇数にしてください。');
     if (polyorder >= window || polyorder < derivative) fail('SG多項式次数は窓幅未満、微分次数以上にしてください。');
     if (analysisEngine !== 'aquap2py' && pipelineMode === 'legacy-python' && polyorder < 1) fail('旧Python互換のSG多項式次数は1以上にしてください。');
@@ -125,12 +127,12 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
       grid = grid.map((_, i) => start + (end - start) * i / (grid.length - 1));
     }
   }
-  if (!Array.isArray(input.aquagramWavelengths) || input.aquagramWavelengths.length < 3 || input.aquagramWavelengths.length > MAX_VARIABLES) fail('Aquagramの波長を3〜10,000点指定してください。');
-  const targets = input.aquagramWavelengths.map(value => number(value, 'Aquagramの波長', Number.MIN_VALUE));
-  if (new Set(targets).size !== targets.length) fail('Aquagramの波長が重複しています。');
-  const tolerance = number(input.aquagramTolerance, 'Aquagramの許容誤差', 0);
+  if (!Array.isArray(input.aquagramWavelengths) || input.aquagramWavelengths.length < (paperActive?0:3) || input.aquagramWavelengths.length > MAX_VARIABLES) fail('Aquagramの波長数を確認してください（上限10,000点）。');
+  const targets = input.aquagramWavelengths.map(value => number(value, 'Aquagramの波長', paperActive?-Infinity:Number.MIN_VALUE));
+  if (!paperActive&&new Set(targets).size !== targets.length) fail('Aquagramの波長が重複しています。');
+  const tolerance = number(input.aquagramTolerance, 'Aquagramの許容誤差', paperActive?-Infinity:0);
   const positions = new Set<number>();
-  for (const target of targets) {
+  for (const target of paperActive?[]:targets) {
     if (target < grid[0] || target > grid.at(-1)!) fail(`Aquagramの波長 ${target} nm が解析範囲外です。`);
     let left = 0, right = grid.length - 1;
     while (left < right) {
@@ -148,7 +150,7 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
   if (['Global mean', '全体平均'].includes(reference)) reference = 'global';
   else if (reference === 'None') reference = 'none';
   else if (!['global', 'none'].includes(reference) && !reference.startsWith('group:')) reference = `group:${reference}`;
-  if (reference === 'group:') fail('Aquagramの対照群名を指定してください。');
+  if (!paperActive&&reference === 'group:') fail('Aquagramの対照群名を指定してください。');
   const config: AnalysisConfig = {
     idColumn, groupColumn, wavelengthColumns: selected, range: [low, high],
     missing: choice(input.missing, ['error', 'median', 'mean'], '欠損処理'),
@@ -159,20 +161,51 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
   };
   if (pipelineMode !== undefined) config.pipelineMode = pipelineMode;
   if (analysisEngine !== undefined) config.analysisEngine = analysisEngine;
+  if (analysisProfile !== undefined) config.analysisProfile = analysisProfile;
+  if (input.paper !== undefined) {
+    // A current-profile run must remain serializable after an incomplete paper
+    // form was opened. Validate a detached paper draft and omit it only when it
+    // is inactive and invalid; safeTree still rejects unsafe keys beforehand.
+    try {
+    const paper=record(input.paper,'論文条件');
+    const phaseColumn=column(paper.phaseColumn,'論文条件のフェーズ列',columns);
+    if(phaseColumn===null)fail('論文条件のフェーズ列を指定してください。');
+    const baselineLabel=text(paper.baselineLabel,'論文条件のBaseline名'),taskLabel=text(paper.taskLabel,'論文条件のTask名');
+    if(baselineLabel===taskLabel)fail('論文条件のBaselineとTaskは異なる名前にしてください。');
+    const subjectColumn=column(paper.subjectColumn,'論文条件の被験者列',columns),timeColumn=column(paper.timeColumn,'論文条件の時刻列',columns);
+    if(timeColumn===null)fail('論文条件のTask時刻列を指定してください。');
+    for(const name of [phaseColumn,subjectColumn,timeColumn])if(name&&(paperActive?(detected?detected.has(name):wavelength(name)!==null):selected.includes(name)))fail('論文条件のフェーズ・被験者・時刻列を波長列と分けてください。');
+    config.paper={phaseColumn,baselineLabel,taskLabel,subjectColumn,timeColumn,timeUnit:choice(paper.timeUnit,['seconds','milliseconds','datetime'],'論文条件の時刻単位'),inputKind:choice(paper.inputKind,['as-recorded','reflectance'],'論文条件の入力値')};
+    if(paper.loading!==undefined){
+      const loading=record(paper.loading,'論文共通loading'),source=record(loading.source,'論文共通loadingの元ファイル');
+      if(!Array.isArray(loading.values)||loading.values.length!==12)fail('論文共通loadingは12座標の値を指定してください。');
+      const values=loading.values.map(value=>number(value,'論文共通loading値'));
+      if(!values.some(value=>value!==0))fail('論文共通loadingをすべて0にはできません。');
+      if(Math.abs(Math.hypot(...values)-1)>1e-6)fail('論文共通loadingは長さ1の単位ベクトルにしてください。');
+      const sha256=text(source.sha256,'論文共通loadingのSHA-256');
+      if(!/^[a-f0-9]{64}$/.test(sha256))fail('論文共通loadingのSHA-256の形式が不正です。');
+      config.paper.loading={values,source:{name:text(source.name,'論文共通loadingのファイル名'),sha256},participantCount:integer(loading.participantCount,'論文共通loadingの被験者数',1,1_000_000)};
+      if(loading.energy!==undefined)config.paper.loading.energy=number(loading.energy,'論文共通loadingのエネルギー比',0,1);
+    }
+    } catch(error) {if(paperActive)throw error;delete config.paper;}
+  }
+  if(config.analysisProfile==='paper-v1'&&!config.paper)fail('論文条件の列と入力値を指定してください。');
+  if(config.analysisProfile==='paper-v1'&&!config.paper?.timeColumn)fail('論文条件のTask時刻列を指定してください。');
   if (input.pls !== undefined) {
     const pls = record(input.pls, 'PLS設定');
     const enabled = boolean(pls.enabled, 'PLSの有効設定');
-    const targetColumn = column(pls.targetColumn, 'PLS目的変数列', columns);
-    const cvGroupColumn = column(pls.cvGroupColumn, 'PLS分割グループ列', columns);
-    const split = choice(pls.split, ['kfold', 'group'], 'PLSの分割方式');
-    if (enabled && targetColumn === null) fail('PLSの目的変数列を指定してください。');
-    if (enabled && selected.includes(targetColumn!)) fail('PLS目的変数列を説明変数の波長列から外してください。');
-    if (enabled && (targetColumn === idColumn || targetColumn === cvGroupColumn)) fail('PLS目的変数列を試料ID列・分割グループ列と分けてください。');
-    if (enabled && split === 'group' && cvGroupColumn === null) fail('PLSのグループ分割列を指定してください。');
+    const fallback=(key:string,value:unknown)=>paperActive&&!enabled&&!own(pls,key)?value:pls[key];
+    const targetColumn = column(fallback('targetColumn',null), 'PLS目的変数列', paperActive?null:columns);
+    const cvGroupColumn = column(fallback('cvGroupColumn',null), 'PLS分割グループ列', paperActive?null:columns);
+    const split = choice(fallback('split','kfold'), ['kfold', 'group'], 'PLSの分割方式');
+    if (!paperActive&&enabled && targetColumn === null) fail('PLSの目的変数列を指定してください。');
+    if (!paperActive&&enabled && selected.includes(targetColumn!)) fail('PLS目的変数列を説明変数の波長列から外してください。');
+    if (!paperActive&&enabled && (targetColumn === idColumn || targetColumn === cvGroupColumn)) fail('PLS目的変数列を試料ID列・分割グループ列と分けてください。');
+    if (!paperActive&&enabled && split === 'group' && cvGroupColumn === null) fail('PLSのグループ分割列を指定してください。');
     const parsed: PLSConfig = {
-      enabled, targetColumn, maxComponents: integer(pls.maxComponents, 'PLS最大成分数', 1, 10),
-      folds: integer(pls.folds, 'PLS分割数', 2, 10), split, cvGroupColumn,
-      seed: integer(pls.seed, 'PLS乱数seed', 0, 2_147_483_647), scale: boolean(pls.scale, 'PLSの標準化'),
+      enabled, targetColumn, maxComponents: integer(fallback('maxComponents',5), 'PLS最大成分数', paperActive?-MAX_VARIABLES:1,paperActive?MAX_VARIABLES:10),
+      folds: integer(fallback('folds',5), 'PLS分割数', paperActive?-MAX_VARIABLES:2,paperActive?MAX_VARIABLES:10), split, cvGroupColumn,
+      seed: integer(fallback('seed',20261021), 'PLS乱数seed', paperActive?-2_147_483_647:0, 2_147_483_647), scale: boolean(fallback('scale',true), 'PLSの標準化'),
     };
     config.pls = parsed;
   }
@@ -180,10 +213,10 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
     const aq = record(input.nativeAquagram, '温度校正Aquagram設定');
     if (!Array.isArray(aq.tCalib) || aq.tCalib.length !== 2) fail('TCalibは下限・上限の2値にしてください。');
     const low = number(aq.tCalib[0], 'TCalib下限'), high = number(aq.tCalib[1], 'TCalib上限');
-    if (low >= high) fail('TCalib下限は上限より小さくしてください。');
-    const sg = integer(aq.smoothN, 'Aquagram内部SG', 3, 501);
-    const calibrationSg = integer(aq.calibrationSmoothN, '校正内部SG', 3, 501);
-    if (sg % 2 !== 1 || calibrationSg % 2 !== 1) fail('校正・Aquagram内部SGは奇数にしてください。');
+    if (!paperActive&&low >= high) fail('TCalib下限は上限より小さくしてください。');
+    const sg = integer(aq.smoothN, 'Aquagram内部SG', paperActive?-MAX_VARIABLES:3,paperActive?MAX_VARIABLES:501);
+    const calibrationSg = integer(aq.calibrationSmoothN, '校正内部SG', paperActive?-MAX_VARIABLES:3,paperActive?MAX_VARIABLES:501);
+    if (!paperActive&&(sg % 2 !== 1 || calibrationSg % 2 !== 1)) fail('校正・Aquagram内部SGは奇数にしてください。');
     const value: NonNullable<AnalysisConfig['nativeAquagram']> = {
       enabled: boolean(aq.enabled, '温度校正Aquagramの有効設定'),
       mode: choice(aq.mode, ['sfc','sfc-diff','aucs','aucs-diff','aucs.tn','aucs.tn-diff','aucs.tn.dce','aucs.tn.dce-diff','aucs.dce','aucs.dce-diff'], '温度校正Aquagram方式'),
@@ -199,40 +232,40 @@ function validateConfig(value: unknown, summary: DatasetSummary | null): Analysi
       if (!/^[a-f0-9]{64}$/.test(sha256)) fail('校正データSHA-256の形式が不正です。');
       value.calibrationSource = {name:text(source.name,'校正ファイル名'),sheet:source.sheet === null ? null : text(source.sheet,'校正シート名'),sha256};
     }
-    if (value.enabled && value.temperatureColumn === null) fail('温度校正列を指定してください。');
-    if (value.enabled && value.mode.endsWith('-diff') && !value.referenceGroup) fail('差分Aquagramの対照群名を指定してください。');
+    if (!paperActive&&value.enabled && value.temperatureColumn === null) fail('温度校正列を指定してください。');
+    if (!paperActive&&value.enabled && value.mode.endsWith('-diff') && !value.referenceGroup) fail('差分Aquagramの対照群名を指定してください。');
     config.nativeAquagram = value;
   }
   if (input.nativePlsr !== undefined) {
     const plsr = record(input.nativePlsr, 'aquap2方式PLSR設定');
     const value: NonNullable<AnalysisConfig['nativePlsr']> = {
       enabled:boolean(plsr.enabled,'aquap2方式PLSRの有効設定'),
-      targetColumn:column(plsr.targetColumn,'aquap2方式PLSRの目的変数',columns),
-      components:plsr.components === null ? null : integer(plsr.components,'PLSR成分数',1,30),
+      targetColumn:column(plsr.targetColumn,'aquap2方式PLSRの目的変数',paperActive?null:columns),
+      components:plsr.components === null ? null : integer(plsr.components,'PLSR成分数',paperActive?-MAX_VARIABLES:1,paperActive?MAX_VARIABLES:30),
       validation:choice(plsr.validation,['LOO','group'],'aquap2方式PLSRのCV方式'),
-      cvGroupColumn:column(plsr.cvGroupColumn,'PLSRのCV群列',columns),
+      cvGroupColumn:column(plsr.cvGroupColumn,'PLSRのCV群列',paperActive?null:columns),
       ...(plsr.excludeOutliers === undefined ? {} : {excludeOutliers:boolean(plsr.excludeOutliers,'PLSR外れ値除外')}),
-      ...(plsr.outlierRange === undefined ? {} : {outlierRange:number(plsr.outlierRange,'PLSR外れ値範囲',0,10)}),
+      ...(plsr.outlierRange === undefined ? {} : {outlierRange:number(plsr.outlierRange,'PLSR外れ値範囲',paperActive?-Infinity:0,paperActive?Infinity:10)}),
     };
-    if (value.enabled && value.targetColumn === null) fail('aquap2方式PLSRの目的変数を指定してください。');
-    if (value.enabled && (selected.includes(value.targetColumn!) || value.targetColumn === idColumn || value.targetColumn === value.cvGroupColumn)) fail('aquap2方式PLSRの目的変数を波長列・試料ID・CV群列と分けてください。');
-    if (value.enabled && value.validation === 'group' && value.cvGroupColumn === null) fail('PLSRのCV群列を指定してください。');
-    if (value.enabled && value.validation === 'group' && selected.includes(value.cvGroupColumn!)) fail('PLSRのCV群列を波長列と分けてください。');
+    if (!paperActive&&value.enabled && value.targetColumn === null) fail('aquap2方式PLSRの目的変数を指定してください。');
+    if (!paperActive&&value.enabled && (selected.includes(value.targetColumn!) || value.targetColumn === idColumn || value.targetColumn === value.cvGroupColumn)) fail('aquap2方式PLSRの目的変数を波長列・試料ID・CV群列と分けてください。');
+    if (!paperActive&&value.enabled && value.validation === 'group' && value.cvGroupColumn === null) fail('PLSRのCV群列を指定してください。');
+    if (!paperActive&&value.enabled && value.validation === 'group' && selected.includes(value.cvGroupColumn!)) fail('PLSRのCV群列を波長列と分けてください。');
     config.nativePlsr = value;
   }
   if (input.nativePreprocessing !== undefined) {
     const extra = record(input.nativePreprocessing, '追加前処理');
     config.nativePreprocessing = {detrend:boolean(extra.detrend, '直線detrend')};
-    if (config.nativePreprocessing.detrend && analysisEngine !== 'aquap2py') fail('追加の直線detrendはaquap2pyを選択してください。');
+    if (!paperActive&&config.nativePreprocessing.detrend && analysisEngine !== 'aquap2py') fail('追加の直線detrendはaquap2pyを選択してください。');
   }
   return config;
 }
 
-/** A reproducible configuration only: no spectra, preview rows or fitted values. */
+/** Configuration and an optional explicit reference loading, never source spectra. */
 export function createSettingsDocument(config: AnalysisConfig, source: { name: string; sheet?: string | null } | null): SettingsDocument {
   safeTree(config); safeTree(source);
   return {
-    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.9',
+    format: 'aquaphotomics-workbench-settings', schemaVersion: 1, appVersion: '1.10',
     createdAt: new Date().toISOString(), source: sourceMetadata(source), config: validateConfig(config, null),
   };
 }
@@ -246,7 +279,7 @@ export function parseSettingsDocument(textInput: string, summary: DatasetSummary
   let config: unknown = document;
   if (own(document, 'format')) {
     if (document.format !== 'aquaphotomics-workbench-settings') fail('この設定ファイルのformatには対応していません。');
-    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
+    if (document.schemaVersion !== 1 || typeof document.appVersion !== 'string' || !['1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9', '1.10'].includes(document.appVersion)) fail('この設定ファイルのバージョンには対応していません。');
     if (typeof document.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(document.createdAt) || !Number.isFinite(Date.parse(document.createdAt))) fail('設定の作成日時が不正です。');
     sourceMetadata(document.source);
     config = document.config;

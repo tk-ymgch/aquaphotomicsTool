@@ -787,6 +787,12 @@ def analyze(df: pd.DataFrame, config: dict, *, calibration: pd.DataFrame | None 
     PCA always centers variables; optional scaling uses population SD (ddof=0).
     """
     if isinstance(config, dict):
+        profile = config.get("analysisProfile", "current")
+        if profile == "paper-v1":
+            from paper import analyze_paper
+            return analyze_paper(df, config)
+        if profile != "current":
+            raise ValueError("解析条件は現行方式または論文条件を選択してください。")
         engine = config.get("analysisEngine", "python")
         if engine == "aquap2py":
             return _analyze_aquap2py(df, config, calibration=calibration)

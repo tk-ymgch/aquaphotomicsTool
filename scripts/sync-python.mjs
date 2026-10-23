@@ -2,7 +2,7 @@ import {mkdir,copyFile,readFile,readdir,writeFile,lstat} from 'node:fs/promises'
 import {zipSync} from 'fflate';
 const dest = new URL('../public/python/', import.meta.url);
 await mkdir(dest,{recursive:true});
-for (const name of ['workbench.py', 'experiment.py']) {
+for (const name of ['workbench.py', 'experiment.py', 'paper.py']) {
   await copyFile(new URL('../python/'+name,import.meta.url), new URL(name,dest));
 }
 const packageRoot = new URL('../python/aquap2py/',import.meta.url);

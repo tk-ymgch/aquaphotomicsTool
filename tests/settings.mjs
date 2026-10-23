@@ -26,7 +26,7 @@ function check(name, test) { try { test(); passed++; } catch (error) { console.e
 check('new document roundtrip and detached snapshots', () => {
   const input = structuredClone(config), doc = createSettingsDocument(input, { name: summary.name });
   assert.equal(doc.format, 'aquaphotomics-workbench-settings');
-  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.9');
+  assert.equal(doc.schemaVersion, 1); assert.equal(doc.appVersion, '1.10');
   assert.equal(doc.source.sheet, null); assert.ok(Number.isFinite(Date.parse(doc.createdAt)));
   input.range[0] = 999; input.wavelengthColumns.length = 0;
   assert.deepEqual(decode(doc), config);
@@ -217,4 +217,72 @@ check('v1.7 fractional temperature, detrend and PLSR outlier settings roundtrip'
   assert.throws(()=>decode({...cfg,analysisEngine:'python'}),/detrend/);
   assert.throws(()=>decode({...cfg,nativePreprocessing:{detrend:'yes'}}));
 });
-console.log(`PASS: ${passed} settings checks (roundtrip, legacy provenance, strict validation, columns, SG grid, PLS, native calibration/PLSR, safety)`);
+const paper={phaseColumn:'group',baselineLabel:'Baseline',taskLabel:'Task',subjectColumn:'batch',timeColumn:'target',timeUnit:'seconds',inputKind:'as-recorded'};
+const loading={values:[1,...Array(11).fill(0)],source:{name:'artificial-reference.csv',sha256:'b'.repeat(64)},participantCount:7,energy:.8};
+check('paper protocol roundtrip preserves current settings and explicit reference loading',()=>{
+  const input={...config,analysisProfile:'paper-v1',paper:{...paper,loading:structuredClone(loading)}};
+  const document=createSettingsDocument(input,null);
+  assert.deepEqual(decode(document),input);
+  assert.equal(document.appVersion,'1.10');
+  input.paper.loading.values[0]=3;
+  assert.equal(document.config.paper.loading.values[0],1);
+  assert.deepEqual(decode({...document,config:{...document.config,analysisProfile:'current'}}),{...document.config,analysisProfile:'current'});
+});
+check('paper metadata and units require explicit valid columns',()=>{
+  for(const change of [{phaseColumn:null},{phaseColumn:'absent'},{subjectColumn:'absent'},{timeColumn:'absent'},{timeColumn:null},{phaseColumn:'wl_1400'},{baselineLabel:''},{taskLabel:'Baseline'},{timeUnit:'minutes'},{inputKind:'absorbance-guessed'}])assert.throws(()=>decode({...config,analysisProfile:'paper-v1',paper:{...paper,...change}}));
+  assert.throws(()=>decode({...config,analysisProfile:'paper-v2',paper}));
+  assert.throws(()=>decode({...config,analysisProfile:'paper-v1'}));
+});
+check('paper loading guards finite unit length, exact dimension, identity and confirmed count',()=>{
+  for(const change of [{values:[1]},{values:Array(12).fill(0)},{values:Array(12).fill(1)},{values:[NaN,...Array(11).fill(0)]},{values:[Infinity,...Array(11).fill(0)]},{participantCount:0},{participantCount:-1},{participantCount:7.2},{participantCount:'7'},{energy:-.1},{energy:1.1},{source:{name:'ref.csv',sha256:'unknown'}},{source:{name:'',sha256:'b'.repeat(64)}}])assert.throws(()=>createSettingsDocument({...config,analysisProfile:'paper-v1',paper:{...paper,loading:{...loading,...change}}},null));
+});
+check('paper reference values persist deliberately while measurements and credentials are stripped',()=>{
+  const input={...config,analysisProfile:'paper-v1',paper:{...paper,measurements:['never-include-private-measurements'],loading:{...loading,token:'never-include-reference-token',source:{...loading.source,endpoint:'never-include-endpoint'}}}};
+  const document=createSettingsDocument(input,null);
+  assert.deepEqual(document.config.paper,{...paper,loading});
+  assert.ok(!JSON.stringify(document).includes('never-include'));
+});
+check('v1.2 through v1.9 settings remain accepted without gaining paper options',()=>{
+  for(const appVersion of ['1.2','1.3','1.4','1.5','1.6','1.7','1.8','1.9'])assert.deepEqual(decode({...createSettingsDocument(config,null),appVersion}),config);
+});
+check('current save/import omits an invalid inactive paper draft without mutating memory',()=>{
+  for(const draft of [{...paper,loading:{...loading,participantCount:0}},{...paper,phaseColumn:''},{...paper,timeColumn:null}]){
+    const input={...config,analysisProfile:'current',paper:structuredClone(draft)},before=structuredClone(input);
+    const document=createSettingsDocument(input,null);
+    assert.equal('paper' in document.config,false);
+    assert.deepEqual(input,before);
+    assert.deepEqual(decode(input),{...config,analysisProfile:'current'});
+    assert.deepEqual(decode(document),{...config,analysisProfile:'current'});
+  }
+  const valid={...config,analysisProfile:'current',paper:{...paper,loading}};
+  assert.deepEqual(decode(createSettingsDocument(valid,null)),valid);
+});
+check('active paper preserves finite unused current grid/SG drafts without imposing their semantics',()=>{
+  const input={...config,analysisProfile:'paper-v1',paper,range:[1000,1200],smooth:true,window:4,polyorder:10,aquagramWavelengths:[1342,1364,1476],aquagramTolerance:0};
+  assert.deepEqual(decode(createSettingsDocument(input,null)),input);
+  assert.throws(()=>decode({...input,analysisProfile:'current'}));
+  const empty={...input,wavelengthColumns:[],aquagramWavelengths:[],range:[1600,1300],groupColumn:'unused-old-group'};
+  assert.deepEqual(decode(createSettingsDocument(empty,null)),empty);
+});
+check('active paper still rejects unsafe trees and invalid types/non-finite/oversize current fields',()=>{
+  const input={...config,analysisProfile:'paper-v1',paper};
+  for(const change of [{window:'4'},{window:Infinity},{range:[1000,NaN]},{smooth:'false'},{aquagramWavelengths:[Infinity]},{wavelengthColumns:Array(10001).fill('wl_1400')}])assert.throws(()=>createSettingsDocument({...input,...change},null));
+  const poisoned=JSON.stringify({...config,analysisProfile:'current',paper:{...paper,loading:{...loading,participantCount:0}}}).replace(/}$/,',"unknown":{"prototype":{"poison":true}}}');
+  assert.throws(()=>parseSettingsDocument(poisoned,summary),/安全でない/);
+});
+check('active paper does not require an unused native calibration/PLS setup to be executable',()=>{
+  const native={...nativeAquagram,enabled:true,temperatureColumn:null,mode:'sfc-diff',referenceGroup:null,tCalib:[30,20],smoothN:16,calibrationSmoothN:16};
+  const currentPls={...pls,targetColumn:null,cvGroupColumn:null};
+  const currentNative={...nativePlsr,targetColumn:null,validation:'group',cvGroupColumn:null};
+  const input={...config,analysisProfile:'paper-v1',analysisEngine:'python',paper,nativeAquagram:native,pls:currentPls,nativePlsr:currentNative,nativePreprocessing:{detrend:true}};
+  assert.deepEqual(decode(createSettingsDocument(input,null)),input);
+  assert.throws(()=>decode({...input,analysisProfile:'current'}));
+});
+check('canonical applied paper settings with disabled-only PLS are reparseable',()=>{
+  const applied={...config,analysisProfile:'paper-v1',analysisEngine:'python',paper,smooth:false,window:3,polyorder:1,pls:{enabled:false}};
+  const parsed=decode(createSettingsDocument(applied,null));
+  assert.equal(parsed.analysisProfile,'paper-v1');
+  assert.deepEqual(parsed.pls,{enabled:false,targetColumn:null,cvGroupColumn:null,maxComponents:5,folds:5,split:'kfold',seed:20261021,scale:true});
+  assert.deepEqual(decode(createSettingsDocument(parsed,null)),parsed);
+});
+console.log(`PASS: ${passed} settings checks (roundtrip, legacy provenance, strict validation, columns, SG grid, PLS, native calibration/PLSR, paper protocol, safety)`);

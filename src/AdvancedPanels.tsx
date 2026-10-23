@@ -100,6 +100,7 @@ export function PLSResults({ result, onSelect }: { result: PLSResult; onSelect?:
 }
 
 function preprocessing(result: AnalysisResult) {
+  if (result.paper) return `論文条件 v1 / ${result.paper.preprocessing.inputKind} → 1300–1600 nm / SNV (n−1)`;
   const settings = result.metadata.settings;
   const scatter = settings.scatter === 'none' ? '散乱補正なし' : settings.scatter.toUpperCase();
   const sg = [settings.smooth ? `SG ${settings.window}点・${settings.polyorder}次` : '平滑化なし', settings.derivative ? `${settings.derivative}次微分` : '微分なし'].join(' / ');
@@ -117,10 +118,11 @@ function meanSpectrumFigure(result: AnalysisResult): Figure {
 }
 
 function calibratedAquagram(result: AnalysisResult): boolean {
-  return !!result.aquagram.mode && !['classic', 'classic-diff'].includes(result.aquagram.mode);
+  return !!result.aquagram.mode && !['classic', 'classic-diff', 'paper-delta-C'].includes(result.aquagram.mode);
 }
 function aquagramUnit(result: AnalysisResult): string {
   const aq = result.aquagram;
+  if (result.paper) return 'ΔC · 参加者別標準化座標のBaseline差';
   const units: Record<string, string> = { percent: '校正AUC / %', 'percentage-point': '校正AUC差 / パーセントポイント',
     'degC-equivalent': 'DCE / °C相当', 'degC-equivalent-deviation': 'DCE偏差 / °C相当',
     'degC-equivalent-difference': 'DCE差 / °C相当', 'dimensionless-foreign-center-scaled': '校正中心による標準化値（無次元）' };
@@ -128,6 +130,7 @@ function aquagramUnit(result: AnalysisResult): string {
   return ['none', 'None'].includes(result.metadata.settings.aquagramReference) ? '前処理後の群平均値' : '標準化した群平均差（無次元）';
 }
 function aquagramScale(result: AnalysisResult): string {
+  if (result.paper) return '参加者ごとの全読込行の標本SD（n−1）';
   if (calibratedAquagram(result)) return result.aquagram.mode!.startsWith('sfc') ? '校正中心からのRMS（分母 n−1）' : '面積比の校正尺度（SD不使用）';
   if (['none', 'None'].includes(result.metadata.settings.aquagramReference)) return '標準化なし';
   const ddof = result.aquagram.sdDdof ?? result.metadata.execution?.aquagramSdDdof;
