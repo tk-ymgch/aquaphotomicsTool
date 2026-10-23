@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aquap2py"
+version = "0.3.1"
+description = "Unofficial, explicitly scoped Python port of aquap2 numerical methods"
+readme = "python/aquap2py/NOTICE.md"
+requires-python = ">=3.10"
+license = {file = "python/aquap2py/LICENSE"}
+dependencies = ["numpy>=1.26", "scipy>=1.11"]
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["aquap2py*"]
+
+[tool.setuptools.package-data]
+aquap2py = ["coverage.json", "NOTICE.md", "LICENSE"]
