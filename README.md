@@ -1,12 +1,12 @@
-# Aquaphotomics Workbench v1.10.1
+# Aquaphotomics Workbench v1.10.2
 
-CSV・Excelのスペクトルを読み込み、前処理、PCA、交差検証付きPLS回帰、Aquagram、解析条件の比較・保存を行う研究用Webアプリです。現行方式と論文条件の切替、Task時間軸の座標変化・共通成分・符号付き時間モデルに対応しています。v1.10.1ではAquagram探索に一画面で見渡す「一覧」と従来の「詳細」の切替を追加しました。試料別Aquagramの横長の時間積層・再生・全画面表示も使用できます。[Aquagram探索の使い方](docs/AQUAGRAM_EXPLORER.md)、[実験データの使い方と集計定義](docs/EXPERIMENT_WORKFLOW.md)を参照してください。React・Vite・TypeScript、Pyodide Web Workerを用い、VKC Visualizer 2のWeb版と技術構成を揃えています。
+CSV・Excelのスペクトルを読み込み、前処理、PCA、交差検証付きPLS回帰、Aquagram、解析条件の比較・保存を行う研究用Webアプリです。現行方式と論文条件の切替、Task時間軸の座標変化・共通成分・符号付き時間モデルに対応しています。v1.10.2ではAquagram探索の長い波長名と目盛りの配置、同時刻の試料選択、参考モデルを適用できない場合の案内を調整しました。「一覧」と「詳細」を切り替えられます。試料別Aquagramの横長の時間積層・再生・全画面表示も使用できます。[Aquagram探索の使い方](docs/AQUAGRAM_EXPLORER.md)、[実験データの使い方と集計定義](docs/EXPERIMENT_WORKFLOW.md)を参照してください。React・Vite・TypeScript、Pyodide Web Workerを用い、VKC Visualizer 2のWeb版と技術構成を揃えています。
 
 黒・白・グレーの日本語UIで、新しく読み込んだデータの既定エンジンは **aquap2py 0.3.1** です。aquap2互換のPython部分移植をブラウザー内で実行し、Rの導入・接続を必要としません。0.3.1は試料別Aquagram座標の出力を追加し、既存の群平均計算を維持します。初回のPython実行環境・ライブラリ取得にはネット接続が必要です。既存のWorkbench標準Pythonと、任意のR本体参照実行も残しています。
 
-## aquap2pyを使う（v1.10.1 / package 0.3.1）
+## aquap2pyを使う（v1.10.2 / package 0.3.1）
 
-`aquap2py` はaquap2の計算をPythonで扱う意図を表す名称で、公式Python版・全機能の移植を意味しません。参照先は固定 **aquap2 0.4.5 / commit `d31c1231bf71f0e73f1a630a32934602782be488`** です。アプリ版1.10.1、Pythonパッケージ版0.3.1、参照Rパッケージ版0.4.5を区別します。完全対応フラグはfalseです。
+`aquap2py` はaquap2の計算をPythonで扱う意図を表す名称で、公式Python版・全機能の移植を意味しません。参照先は固定 **aquap2 0.4.5 / commit `d31c1231bf71f0e73f1a630a32934602782be488`** です。アプリ版1.10.2、Pythonパッケージ版0.3.1、参照Rパッケージ版0.4.5を区別します。完全対応フラグはfalseです。
 
 | エンジン | 用途・主な範囲 | 実行先 |
 | --- | --- | --- |
