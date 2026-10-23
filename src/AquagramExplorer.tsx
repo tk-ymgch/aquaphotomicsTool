@@ -154,7 +154,7 @@ export default function AquagramExplorer({result,experiment,stale,onConfigure,on
             <line x1={stackTimeX(axis.values[selected])} x2={stackTimeX(axis.values[selected])} y1="27" y2="315" stroke="#202a31" strokeWidth="1.5" strokeDasharray="5 4"/>
             {stacked.map(index=><circle key={index} cx={stackTimeX(axis.values[index])} cy="315" r={index===selected?4.5:2.6} fill={index===selected?'#202a31':'#a0aab0'} onClick={()=>{setPlaying(false);select(index);}} style={{cursor:'pointer'}}><title>{samples.ids[index]} · {axis.label}: {num(axis.values[index],6)} {axis.unit} · 表示位置 {indices.indexOf(index)+1}/{indices.length}</title></circle>)}
             <text x={Math.max(100,Math.min(1000,stackTimeX(axis.values[selected])))} y="20" textAnchor="middle" fill="#202a31" fontSize="12" fontWeight="600">{num(axis.values[selected],3)} {axis.unit}</text>
-            <line x1="96" x2="1004" y1="315" y2="315" stroke="#8d999f" strokeWidth="1"/>
+            <line x1="96" x2="1004" y1="315" y2="315" stroke="#8d999f" strokeWidth="1" pointerEvents="none"/>
             <text x="550" y="369" textAnchor="middle" fill="#66747d" fontSize="12">{axis.label} / {axis.unit} →</text>
           </svg>
         </div>
